@@ -1059,13 +1059,6 @@ pipeline := mgo.Stage().Project(proj)
 coll.Aggs(ctx).Stage(pipeline).All(&docs)
 ```
 
-建议：
-
-1. 应用启动时创建单例 `mgo.Client`，在进程结束时统一 `Disconnect`。
-2. 在仓储层注入 `*mgo.Collection` 并封装查询/更新逻辑，保持服务层简洁。
-3. 根据业务需要将通用 `Filter`、`Update` 片段提取为方法或常量，提升复用。
-4. 使用 `StageBuilder.Clone()` 复用公共 pipeline 片段，避免重复构建。
-
 ## 常见问题
 
 - **如何启用认证或 TLS？**
