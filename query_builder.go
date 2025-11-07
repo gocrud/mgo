@@ -3,6 +3,7 @@ package mgo
 import (
 	"context"
 
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -33,15 +34,17 @@ import (
 //	    Eq("status", "active").
 //	    Count(ctx)
 type QueryBuilder struct {
-	coll       *Collection
-	ctx        context.Context
-	filter     *FilterBuilder
-	projection *Projection
-	sort       *Sort
-	limit      int64
-	skip       int64
-	hint       any
-	batchSize  int32
+	coll           *Collection
+	ctx            context.Context
+	filter         *FilterBuilder
+	projection     *Projection
+	sort           *Sort
+	limit          int64
+	skip           int64
+	hint           any
+	batchSize      int32
+	includeDeleted *bool // nil: 仅已删除, true: 包含已删除, false/unset: 排除已删除
+	hardDelete     bool  // true: 强制硬删除, false: 根据配置决定
 }
 
 // newQueryBuilder 创建查询构建器（内部使用）
@@ -492,7 +495,7 @@ func (qb *QueryBuilder) One(result any) error {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.FindOne(qb.ctx, qb.filter.BuildM(), opts).Decode(result)
+	return qb.coll.coll.FindOne(qb.ctx, qb.buildFilterWithSoftDelete(), opts).Decode(result)
 }
 
 // All 查询多条记录并解码到结果切片
@@ -502,7 +505,7 @@ func (qb *QueryBuilder) One(result any) error {
 //	var users []User
 //	err := coll.Query(ctx).Eq("status", "active").All(&users)
 func (qb *QueryBuilder) All(results any) error {
-	cursor, err := qb.coll.coll.Find(qb.ctx, qb.filter.BuildM(), qb.buildFindOptions())
+	cursor, err := qb.coll.coll.Find(qb.ctx, qb.buildFilterWithSoftDelete(), qb.buildFindOptions())
 	if err != nil {
 		return err
 	}
@@ -531,7 +534,7 @@ func (qb *QueryBuilder) Count() (int64, error) {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.CountDocuments(qb.ctx, qb.filter.BuildM(), opts)
+	return qb.coll.coll.CountDocuments(qb.ctx, qb.buildFilterWithSoftDelete(), opts)
 }
 
 // Exists 判断是否存在满足条件的文档
@@ -565,7 +568,7 @@ func (qb *QueryBuilder) Exists() (bool, error) {
 //	    // 处理 user
 //	}
 func (qb *QueryBuilder) Cursor() (*mongo.Cursor, error) {
-	return qb.coll.coll.Find(qb.ctx, qb.filter.BuildM(), qb.buildFindOptions())
+	return qb.coll.coll.Find(qb.ctx, qb.buildFilterWithSoftDelete(), qb.buildFindOptions())
 }
 
 // ==================== 查询并修改 ====================
@@ -596,7 +599,7 @@ func (qb *QueryBuilder) FindAndUpdate(update *UpdateBuilder, result any) error {
 
 	return qb.coll.coll.FindOneAndUpdate(
 		qb.ctx,
-		qb.filter.BuildM(),
+		qb.buildFilterWithSoftDelete(),
 		update.Build(),
 		opts,
 	).Decode(result)
@@ -628,7 +631,7 @@ func (qb *QueryBuilder) FindAndReplace(replacement any, result any) error {
 
 	return qb.coll.coll.FindOneAndReplace(
 		qb.ctx,
-		qb.filter.BuildM(),
+		qb.buildFilterWithSoftDelete(),
 		replacement,
 		opts,
 	).Decode(result)
@@ -636,14 +639,50 @@ func (qb *QueryBuilder) FindAndReplace(replacement any, result any) error {
 
 // FindAndDelete 查找并删除文档
 //
+// 行为取决于是否启用软删除：
+//   - 未启用软删除：执行硬删除（物理删除）
+//   - 启用软删除：执行软删除（设置 deleted_at 字段）
+//   - 启用软删除 + WithHardDelete()：强制硬删除
+//
 // 示例：
 //
 //	var deletedUser User
 //	err := coll.Query(ctx).
 //	    Eq("_id", id).
 //	    FindAndDelete(&deletedUser)
+//
+//	// 强制硬删除
+//	err := coll.Query(ctx).
+//	    Eq("_id", id).
+//	    WithHardDelete().
+//	    FindAndDelete(&deletedUser)
 func (qb *QueryBuilder) FindAndDelete(result any) error {
-	opts := options.FindOneAndDelete()
+	// 如果未启用软删除或强制硬删除，执行硬删除
+	if !qb.coll.softDelete.Enabled || qb.hardDelete {
+		opts := options.FindOneAndDelete()
+
+		if qb.projection != nil {
+			opts.SetProjection(qb.projection.BuildM())
+		}
+
+		if qb.sort != nil {
+			opts.SetSort(qb.sort.BuildM())
+		}
+
+		if qb.hint != nil {
+			opts.SetHint(qb.hint)
+		}
+
+		return qb.coll.coll.FindOneAndDelete(
+			qb.ctx,
+			qb.buildFilterWithSoftDelete(),
+			opts,
+		).Decode(result)
+	}
+
+	// 启用软删除时，使用 FindOneAndUpdate 来软删除
+	opts := options.FindOneAndUpdate().
+		SetReturnDocument(options.Before) // 返回更新前的文档
 
 	if qb.projection != nil {
 		opts.SetProjection(qb.projection.BuildM())
@@ -657,9 +696,10 @@ func (qb *QueryBuilder) FindAndDelete(result any) error {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.FindOneAndDelete(
+	return qb.coll.coll.FindOneAndUpdate(
 		qb.ctx,
-		qb.filter.BuildM(),
+		qb.buildFilterWithSoftDelete(),
+		qb.coll.buildSoftDeleteUpdate(),
 		opts,
 	).Decode(result)
 }
@@ -680,7 +720,7 @@ func (qb *QueryBuilder) UpdateOne(update *UpdateBuilder) (*mongo.UpdateResult, e
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.UpdateOne(qb.ctx, qb.filter.BuildM(), update.Build(), opts)
+	return qb.coll.coll.UpdateOne(qb.ctx, qb.buildFilterWithSoftDelete(), update.Build(), opts)
 }
 
 // UpdateMany 更新多条文档
@@ -697,35 +737,202 @@ func (qb *QueryBuilder) UpdateMany(update *UpdateBuilder) (*mongo.UpdateResult, 
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.UpdateMany(qb.ctx, qb.filter.BuildM(), update.Build(), opts)
+	return qb.coll.coll.UpdateMany(qb.ctx, qb.buildFilterWithSoftDelete(), update.Build(), opts)
 }
 
 // DeleteOne 删除单条文档
 //
+// 行为取决于是否启用软删除：
+//   - 未启用软删除：执行硬删除（物理删除）
+//   - 启用软删除：执行软删除（设置 deleted_at 字段）
+//   - 启用软删除 + WithHardDelete()：强制硬删除
+//
 // 示例：
 //
-//	result, err := coll.Query(ctx).Eq("_id", id).DeleteOne()
+//	// 未启用软删除时
+//	result, err := coll.Query(ctx).Eq("_id", id).DeleteOne()  // 硬删除
+//
+//	// 启用软删除时
+//	result, err := coll.Query(ctx).Eq("_id", id).DeleteOne()  // 软删除
+//
+//	// 强制硬删除
+//	result, err := coll.Query(ctx).Eq("_id", id).WithHardDelete().DeleteOne()
 func (qb *QueryBuilder) DeleteOne() (*mongo.DeleteResult, error) {
-	opts := options.DeleteOne()
+	// 如果未启用软删除或强制硬删除，执行硬删除
+	if !qb.coll.softDelete.Enabled || qb.hardDelete {
+		opts := options.DeleteOne()
+		if qb.hint != nil {
+			opts.SetHint(qb.hint)
+		}
+		return qb.coll.coll.DeleteOne(qb.ctx, qb.buildFilterWithSoftDelete(), opts)
+	}
 
+	// 启用软删除时，执行软删除（更新 deleted_at 字段）
+	opts := options.UpdateOne()
 	if qb.hint != nil {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.DeleteOne(qb.ctx, qb.filter.BuildM(), opts)
+	updateResult, err := qb.coll.coll.UpdateOne(
+		qb.ctx,
+		qb.buildFilterWithSoftDelete(),
+		qb.coll.buildSoftDeleteUpdate(),
+		opts,
+	)
+
+	// 将 UpdateResult 转换为 DeleteResult
+	deleteResult := &mongo.DeleteResult{
+		DeletedCount: updateResult.ModifiedCount,
+	}
+	return deleteResult, err
 }
 
 // DeleteMany 删除多条文档
 //
+// 行为取决于是否启用软删除：
+//   - 未启用软删除：执行硬删除（物理删除）
+//   - 启用软删除：执行软删除（设置 deleted_at 字段）
+//   - 启用软删除 + WithHardDelete()：强制硬删除
+//
 // 示例：
 //
-//	result, err := coll.Query(ctx).Eq("status", "expired").DeleteMany()
+//	// 未启用软删除时
+//	result, err := coll.Query(ctx).Eq("status", "expired").DeleteMany()  // 硬删除
+//
+//	// 启用软删除时
+//	result, err := coll.Query(ctx).Eq("status", "expired").DeleteMany()  // 软删除
+//
+//	// 强制硬删除
+//	result, err := coll.Query(ctx).OnlyDeleted().WithHardDelete().DeleteMany()
 func (qb *QueryBuilder) DeleteMany() (*mongo.DeleteResult, error) {
-	opts := options.DeleteMany()
+	// 如果未启用软删除或强制硬删除，执行硬删除
+	if !qb.coll.softDelete.Enabled || qb.hardDelete {
+		opts := options.DeleteMany()
+		if qb.hint != nil {
+			opts.SetHint(qb.hint)
+		}
+		return qb.coll.coll.DeleteMany(qb.ctx, qb.buildFilterWithSoftDelete(), opts)
+	}
 
+	// 启用软删除时，执行软删除（更新 deleted_at 字段）
+	opts := options.UpdateMany()
 	if qb.hint != nil {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.DeleteMany(qb.ctx, qb.filter.BuildM(), opts)
+	updateResult, err := qb.coll.coll.UpdateMany(
+		qb.ctx,
+		qb.buildFilterWithSoftDelete(),
+		qb.coll.buildSoftDeleteUpdate(),
+		opts,
+	)
+
+	// 将 UpdateResult 转换为 DeleteResult
+	deleteResult := &mongo.DeleteResult{
+		DeletedCount: updateResult.ModifiedCount,
+	}
+	return deleteResult, err
+}
+
+// ==================== 软删除相关方法 ====================
+
+// WithDeleted 包含已软删除的文档
+//
+// 仅在启用软删除时有效
+//
+// 示例：
+//
+//	// 查询包含已删除的文档
+//	err := coll.Query(ctx).Eq("status", "active").WithDeleted().All(&users)
+func (qb *QueryBuilder) WithDeleted() *QueryBuilder {
+	includeDeleted := true
+	qb.includeDeleted = &includeDeleted
+	return qb
+}
+
+// OnlyDeleted 仅查询已软删除的文档
+//
+// 仅在启用软删除时有效
+//
+// 示例：
+//
+//	// 仅查询已删除的文档
+//	err := coll.Query(ctx).Eq("status", "active").OnlyDeleted().All(&users)
+//
+//	// 清理已删除的数据
+//	result, err := coll.Query(ctx).OnlyDeleted().WithHardDelete().DeleteMany()
+func (qb *QueryBuilder) OnlyDeleted() *QueryBuilder {
+	qb.includeDeleted = nil
+	return qb
+}
+
+// WithHardDelete 强制执行硬删除（永久删除）
+//
+// 在启用软删除时，使用此方法可以强制执行真正的删除操作
+//
+// 示例：
+//
+//	// 永久删除文档
+//	result, err := coll.Query(ctx).Eq("_id", id).WithHardDelete().DeleteOne()
+//
+//	// 清理已软删除的数据
+//	result, err := coll.Query(ctx).OnlyDeleted().WithHardDelete().DeleteMany()
+func (qb *QueryBuilder) WithHardDelete() *QueryBuilder {
+	qb.hardDelete = true
+	return qb
+}
+
+// Restore 恢复已软删除的文档（移除 deleted_at 字段）
+//
+// 仅在启用软删除时有效，否则返回错误
+//
+// 示例：
+//
+//	// 恢复单条
+//	result, err := coll.Query(ctx).Eq("_id", id).Restore()
+//
+//	// 批量恢复
+//	result, err := coll.Query(ctx).In("_id", ids...).Restore()
+func (qb *QueryBuilder) Restore() (*mongo.UpdateResult, error) {
+	if !qb.coll.softDelete.Enabled {
+		return nil, ErrSoftDeleteNotEnabled
+	}
+
+	// 恢复操作默认只针对已删除的文档
+	if qb.includeDeleted == nil || *qb.includeDeleted {
+		qb.OnlyDeleted()
+	}
+
+	opts := options.UpdateMany()
+	if qb.hint != nil {
+		opts.SetHint(qb.hint)
+	}
+
+	return qb.coll.coll.UpdateMany(
+		qb.ctx,
+		qb.buildFilterWithSoftDelete(),
+		qb.coll.buildRestoreUpdate(),
+		opts,
+	)
+}
+
+// buildFilterWithSoftDelete 构建包含软删除过滤的完整过滤器
+func (qb *QueryBuilder) buildFilterWithSoftDelete() bson.M {
+	baseFilter := qb.filter.BuildM()
+	softDeleteFilter := qb.coll.buildSoftDeleteFilter(qb.includeDeleted)
+
+	if len(softDeleteFilter) == 0 {
+		return baseFilter
+	}
+
+	// 合并过滤条件
+	result := bson.M{}
+	for k, v := range baseFilter {
+		result[k] = v
+	}
+	for _, elem := range softDeleteFilter {
+		result[elem.Key] = elem.Value
+	}
+
+	return result
 }

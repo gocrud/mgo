@@ -33,16 +33,33 @@ import (
 //	// 简单插入
 //	id, err := coll.InsertOne(ctx, user)
 type Collection struct {
-	coll *mongo.Collection
+	coll       *mongo.Collection
+	softDelete *SoftDeleteConfig
 }
 
-// NewCollection 创建集合封装
+// NewCollection 创建集合封装（内部使用）
+//
+// 对外使用 Client.Collection() 或 Database.Collection() 方法
 //
 // 示例：
 //
-//	coll := mgo.NewCollection(mongoCollection)
-func NewCollection(coll *mongo.Collection) *Collection {
-	return &Collection{coll: coll}
+//	// 不启用软删除
+//	coll := mgo.newCollection(mongoCollection)
+//
+//	// 启用软删除
+//	coll := mgo.newCollection(mongoCollection, mgo.WithSoftDelete())
+//
+//	// 自定义软删除字段
+//	coll := mgo.newCollection(mongoCollection, mgo.WithSoftDelete("removed_at"))
+func newCollection(coll *mongo.Collection, opts ...CollectionOption) *Collection {
+	c := &Collection{
+		coll:       coll,
+		softDelete: defaultSoftDeleteConfig(),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Name 获取集合名称

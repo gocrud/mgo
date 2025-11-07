@@ -90,7 +90,7 @@ func main() {
 	}
 	var cityCounts []CityCount
 	coll.Aggs(ctx).
-		Group("$city", mgo.M{"count": mgo.Sum(1)}).
+		Stage(mgo.Stage().Group("$city", mgo.M{"count": mgo.Sum(1)})).
 		All(&cityCounts)
 
 	for _, cc := range cityCounts {

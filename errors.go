@@ -19,6 +19,9 @@ var (
 	// ErrTimeout 操作超时
 	ErrTimeout = errors.New("mgo: operation timeout")
 
+	// ErrSoftDeleteNotEnabled 软删除未启用
+	ErrSoftDeleteNotEnabled = errors.New("mgo: soft delete not enabled")
+
 	// ErrInvalidOperation 无效操作
 	ErrInvalidOperation = errors.New("mgo: invalid operation")
 

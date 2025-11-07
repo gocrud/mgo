@@ -364,10 +364,11 @@ func example6_Aggregation(ctx context.Context, coll *mgo.Collection) {
 	}
 	var cityCounts []CityCount
 	err := coll.Aggs(ctx).
-		Group("$city", mgo.M{
-			"count": mgo.Sum(1),
-		}).
-		SortDesc("count").
+		Stage(mgo.Stage().
+			Group("$city", mgo.M{
+				"count": mgo.Sum(1),
+			}).
+			SortDesc("count")).
 		All(&cityCounts)
 	if err != nil {
 		log.Fatal("聚合失败:", err)
@@ -387,14 +388,15 @@ func example6_Aggregation(ctx context.Context, coll *mgo.Collection) {
 	}
 	var cityStats []CityStats
 	err = coll.Aggs(ctx).
-		Match(mgo.Filter().Eq("status", "active")).
-		Group("$city", mgo.M{
-			"avg_age":    mgo.Avg("$age"),
-			"min_age":    mgo.Min("$age"),
-			"max_age":    mgo.Max("$age"),
-			"user_count": mgo.Sum(1),
-		}).
-		SortDesc("avg_age").
+		Stage(mgo.Stage().
+			Match(mgo.Filter().Eq("status", "active")).
+			Group("$city", mgo.M{
+				"avg_age":    mgo.Avg("$age"),
+				"min_age":    mgo.Min("$age"),
+				"max_age":    mgo.Max("$age"),
+				"user_count": mgo.Sum(1),
+			}).
+			SortDesc("avg_age")).
 		All(&cityStats)
 	if err != nil {
 		log.Fatal("聚合失败:", err)
@@ -413,10 +415,11 @@ func example6_Aggregation(ctx context.Context, coll *mgo.Collection) {
 	}
 	var statusGroups []StatusGroup
 	err = coll.Aggs(ctx).
-		Group(mgo.F("status"), mgo.M{
-			"count": mgo.Sum(1),
-			"names": mgo.Push("$name"),
-		}).
+		Stage(mgo.Stage().
+			Group(mgo.F("status"), mgo.M{
+				"count": mgo.Sum(1),
+				"names": mgo.Push("$name"),
+			})).
 		All(&statusGroups)
 	if err != nil {
 		log.Fatal("聚合失败:", err)
@@ -429,10 +432,11 @@ func example6_Aggregation(ctx context.Context, coll *mgo.Collection) {
 	// 6.4 复杂聚合 - 筛选、投影、排序、限制
 	var topUsers []User
 	err = coll.Aggs(ctx).
-		Match(mgo.Filter().Eq("status", "active")).
-		Project(mgo.NewProjection().Include("name", "age", "city")).
-		SortDesc("age").
-		Limit(2).
+		Stage(mgo.Stage().
+			Match(mgo.Filter().Eq("status", "active")).
+			Project(mgo.NewProjection().Include("name", "age", "city")).
+			SortDesc("age").
+			Limit(2)).
 		All(&topUsers)
 	if err != nil {
 		log.Fatal("聚合失败:", err)

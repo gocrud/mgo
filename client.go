@@ -247,8 +247,14 @@ type Database struct {
 // 示例：
 //
 //	users := db.Collection("users")
-func (d *Database) Collection(name string) *Collection {
-	return NewCollection(d.db.Collection(name))
+//
+//	// 启用软删除
+//	users := db.Collection("users", mgo.WithSoftDelete())
+//
+//	// 自定义软删除字段
+//	users := db.Collection("users", mgo.WithSoftDelete("removed_at"))
+func (d *Database) Collection(name string, opts ...CollectionOption) *Collection {
+	return newCollection(d.db.Collection(name), opts...)
 }
 
 // Coll Collection 的简写形式
@@ -256,8 +262,11 @@ func (d *Database) Collection(name string) *Collection {
 // 示例：
 //
 //	users := db.Coll("users")
-func (d *Database) Coll(name string) *Collection {
-	return d.Collection(name)
+//
+//	// 启用软删除
+//	users := db.Coll("users", mgo.WithSoftDelete())
+func (d *Database) Coll(name string, opts ...CollectionOption) *Collection {
+	return d.Collection(name, opts...)
 }
 
 // Name 获取数据库名称
