@@ -54,7 +54,7 @@ func main() {
 	// ==================== 2. 查询 ====================
 	fmt.Println("📖 2. 查询数据")
 
-	// 查询单条
+	// 查询单条 (更多泛型用法请参考 examples/generic/main.go)
 	var foundUser User
 	err = coll.Query(ctx).Eq("name", "张三").One(&foundUser)
 	if err != nil {
@@ -68,10 +68,10 @@ func main() {
 
 	// ==================== 3. 更新 ====================
 	fmt.Println("✏️  3. 更新数据")
-	update := mgo.Update().Set("age", 26)
+	// 使用 mgo.Set 快捷更新 (也支持 mgo.Update().Set(...))
 	updateResult, _ := coll.Query(ctx).
 		Eq("name", "张三").
-		UpdateOne(update)
+		UpdateOne(mgo.Set("age", 26))
 	fmt.Printf("   更新了 %d 条记录\n\n", updateResult.ModifiedCount)
 
 	// ==================== 4. 聚合 ====================

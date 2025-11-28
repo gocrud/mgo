@@ -167,8 +167,15 @@ func (c *Collection) InsertMany(ctx context.Context, documents []any) (*mongo.In
 //
 //	result, err := coll.UpdateByID(ctx, id,
 //	    Update().Set("status", "inactive"))
-func (c *Collection) UpdateByID(ctx context.Context, id any, update *UpdateBuilder) (*mongo.UpdateResult, error) {
-	return c.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, update.Build())
+func (c *Collection) UpdateByID(ctx context.Context, id any, update any) (*mongo.UpdateResult, error) {
+	// 这里没有 QueryBuilder 实例，所以我们需要手动处理 update
+	var updateDoc any
+	if ub, ok := update.(*UpdateBuilder); ok {
+		updateDoc = ub.Build()
+	} else {
+		updateDoc = update
+	}
+	return c.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, updateDoc)
 }
 
 // DeleteByID 通过 ID 删除文档（快捷方法）

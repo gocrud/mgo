@@ -89,3 +89,14 @@ func ptrBool(v bool) *bool {
 func ptrString(v string) *string {
 	return &v
 }
+
+// ==================== 快捷构建辅助函数 ====================
+
+// Set 创建 $set 更新文档的快捷函数
+//
+// 示例：
+//
+//	mgo.Set("name", "张三") // -> bson.M{"$set": bson.M{"name": "张三"}}
+func Set(key string, value any) bson.M {
+	return bson.M{"$set": bson.M{key: value}}
+}

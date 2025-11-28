@@ -16,6 +16,8 @@
   - [聚合](#聚合)
   - [事务](#事务)
 - [软删除功能](#软删除功能)
+- [泛型支持](#泛型支持)
+- [简化更新构建](#简化更新构建)
 - [QueryBuilder 常用方法速查](#querybuilder-常用方法速查)
 - [UpdateBuilder 常用方法速查](#updatebuilder-常用方法速查)
 - [聚合阶段与表达式速查](#聚合阶段与表达式速查)
@@ -521,6 +523,81 @@ _, err := users.Native().Indexes().CreateOne(ctx, indexModel)
 ```
 
 更多详情请参考 [SOFT_DELETE.md](SOFT_DELETE.md)。
+
+## 泛型支持
+
+mgo 提供了强大的泛型支持，使代码更加简洁且类型安全。通过 `mgo.Model[T]` 方法，可以将普通集合转换为泛型集合。
+
+### 1. 泛型集合初始化
+
+```go
+// 假设有一个 User 结构体
+type User struct {
+    ID   bson.ObjectID `bson:"_id"`
+    Name string        `bson:"name"`
+    Age  int           `bson:"age"`
+}
+
+// 1. 获取普通集合
+coll := client.Database("db").Collection("users")
+
+// 2. 转换为泛型集合
+userColl := mgo.Model[User](coll)
+```
+
+### 2. 泛型查询 (Type-Safe Query)
+
+使用泛型集合后，`One()` 和 `All()` 方法会直接返回目标类型，无需手动声明变量或传递指针。
+
+```go
+// 查询单条 (返回 User, error)
+user, err := userColl.Query(ctx).Eq("name", "张三").One()
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(user.Name)
+
+// 查询列表 (返回 []User, error)
+users, err := userColl.Query(ctx).Gte("age", 18).All()
+for _, u := range users {
+    fmt.Println(u.Name)
+}
+
+// 查找并更新 (返回 User, error)
+updatedUser, err := userColl.Query(ctx).
+    Eq("_id", id).
+    FindAndUpdate(mgo.Set("age", 26))
+```
+
+## 简化更新构建
+
+除了功能强大的 `UpdateBuilder`，mgo 现在支持更简洁的更新方式，允许直接使用 `map`、`bson.M` 或快捷函数。
+
+### 1. 使用 mgo.Set 快捷函数
+
+对于最常见的 `$set` 操作，提供了 `mgo.Set` 快捷函数：
+
+```go
+// 简单更新
+coll.Query(ctx).Eq("_id", id).UpdateOne(mgo.Set("status", "active"))
+```
+
+### 2. 直接使用 map
+
+支持直接传入 `map[string]any` 或 `bson.M`，使构建复杂更新更加灵活：
+
+```go
+// 混合操作符
+update := bson.M{
+    "$set": bson.M{"status": "active"},
+    "$inc": bson.M{"login_count": 1},
+}
+coll.Query(ctx).Eq("_id", id).UpdateOne(update)
+```
+
+### 3. 泛型更新
+
+泛型集合的 `FindAndUpdate`、`FindAndReplace` 等方法同样支持上述简化写法，并直接返回强类型的文档对象。
 
 ## QueryBuilder 常用方法速查
 

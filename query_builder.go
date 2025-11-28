@@ -434,6 +434,16 @@ func (qb *QueryBuilder) BatchSize(size int32) *QueryBuilder {
 	return qb
 }
 
+// buildUpdate 构建更新文档
+//
+// 支持 *UpdateBuilder、map、bson.M、struct 等
+func (qb *QueryBuilder) buildUpdate(update any) any {
+	if ub, ok := update.(*UpdateBuilder); ok {
+		return ub.Build()
+	}
+	return update
+}
+
 // ==================== 执行方法 ====================
 
 // buildFindOptions 构建查询选项
@@ -581,7 +591,12 @@ func (qb *QueryBuilder) Cursor() (*mongo.Cursor, error) {
 //	err := coll.Query(ctx).
 //	    Eq("_id", id).
 //	    FindAndUpdate(Update().Set("status", "inactive"), &updatedUser)
-func (qb *QueryBuilder) FindAndUpdate(update *UpdateBuilder, result any) error {
+//
+//	// 使用 map 简化更新（注意：如果不包含操作符，可能替换整个文档，建议使用 mgo.Set）
+//	err := coll.Query(ctx).
+//	    Eq("_id", id).
+//	    FindAndUpdate(mgo.Set("status", "inactive"), &updatedUser)
+func (qb *QueryBuilder) FindAndUpdate(update any, result any) error {
 	opts := options.FindOneAndUpdate().
 		SetReturnDocument(options.After)
 
@@ -600,7 +615,7 @@ func (qb *QueryBuilder) FindAndUpdate(update *UpdateBuilder, result any) error {
 	return qb.coll.coll.FindOneAndUpdate(
 		qb.ctx,
 		qb.buildFilterWithSoftDelete(),
-		update.Build(),
+		qb.buildUpdate(update),
 		opts,
 	).Decode(result)
 }
@@ -713,14 +728,19 @@ func (qb *QueryBuilder) FindAndDelete(result any) error {
 //	result, err := coll.Query(ctx).
 //	    Eq("_id", id).
 //	    UpdateOne(Update().Set("status", "inactive"))
-func (qb *QueryBuilder) UpdateOne(update *UpdateBuilder) (*mongo.UpdateResult, error) {
+//
+//	// 使用快捷方式
+//	result, err := coll.Query(ctx).
+//	    Eq("_id", id).
+//	    UpdateOne(mgo.Set("status", "inactive"))
+func (qb *QueryBuilder) UpdateOne(update any) (*mongo.UpdateResult, error) {
 	opts := options.UpdateOne()
 
 	if qb.hint != nil {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.UpdateOne(qb.ctx, qb.buildFilterWithSoftDelete(), update.Build(), opts)
+	return qb.coll.coll.UpdateOne(qb.ctx, qb.buildFilterWithSoftDelete(), qb.buildUpdate(update), opts)
 }
 
 // UpdateMany 更新多条文档
@@ -730,14 +750,14 @@ func (qb *QueryBuilder) UpdateOne(update *UpdateBuilder) (*mongo.UpdateResult, e
 //	result, err := coll.Query(ctx).
 //	    Eq("status", "pending").
 //	    UpdateMany(Update().Set("status", "processed"))
-func (qb *QueryBuilder) UpdateMany(update *UpdateBuilder) (*mongo.UpdateResult, error) {
+func (qb *QueryBuilder) UpdateMany(update any) (*mongo.UpdateResult, error) {
 	opts := options.UpdateMany()
 
 	if qb.hint != nil {
 		opts.SetHint(qb.hint)
 	}
 
-	return qb.coll.coll.UpdateMany(qb.ctx, qb.buildFilterWithSoftDelete(), update.Build(), opts)
+	return qb.coll.coll.UpdateMany(qb.ctx, qb.buildFilterWithSoftDelete(), qb.buildUpdate(update), opts)
 }
 
 // DeleteOne 删除单条文档
