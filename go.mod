@@ -2,7 +2,7 @@ module github.com/gocrud/mgo
 
 go 1.25.0
 
-require go.mongodb.org/mongo-driver/v2 v2.4.0
+require go.mongodb.org/mongo-driver/v2 v2.4.1
 
 require (
 	github.com/golang/snappy v1.0.0 // indirect

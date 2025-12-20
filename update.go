@@ -1,385 +1,420 @@
 package mgo
 
-import (
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
+// ==================== 更新操作 ====================
 
 // UpdateBuilder 更新构建器
-//
-// 用于构建 MongoDB 更新操作，完全消除 $set、$inc 等操作符字符串。
-//
-// 使用示例：
-//
-//	// 基础更新
-//	update := mgo.Update().
-//	    Set("name", "张三").
-//	    Set("age", 25).
-//	    Inc("visits", 1)
-//
-//	// 数组操作
-//	update := mgo.Update().
-//	    Push("tags", "new-tag").
-//	    Pull("old_tags", "obsolete").
-//	    AddToSet("skills", "golang")
-//
-//	// 组合更新
-//	update := mgo.Update().
-//	    Set("status", "active").
-//	    Inc("level", 1).
-//	    CurrentDate("updated_at").
-//	    SetOnInsert("created_at", time.Now())
 type UpdateBuilder struct {
-	updates map[string]bson.D
+	updates M
 }
 
-// Update 创建新的更新构建器
-//
-// 示例：
-//
-//	update := mgo.Update()
-func Update() *UpdateBuilder {
+// newUpdateBuilder 创建更新构建器
+func newUpdateBuilder() *UpdateBuilder {
 	return &UpdateBuilder{
-		updates: make(map[string]bson.D),
+		updates: M{},
 	}
 }
 
-// Set 设置字段值 ($set)
-//
-// 示例：
-//
-//	update.Set("name", "张三")
-//	update.Set("age", 25)
-//	update.Set("user.email", "zhangsan@example.com")
-func (u *UpdateBuilder) Set(field string, value any) *UpdateBuilder {
-	u.addOperator("$set", field, value)
-	return u
-}
+// ==================== 更新方法（Query）====================
 
-// SetM 批量设置多个字段 ($set)
+// Set 设置字段值
 //
 // 示例：
 //
-//	update.SetM(M{
-//	    "name": "张三",
-//	    "age": 25,
-//	    "status": "active",
-//	})
-func (u *UpdateBuilder) SetM(fields M) *UpdateBuilder {
-	for field, value := range fields {
-		u.addOperator("$set", field, value)
+//	err := users.Find().ID(id).
+//	    Set("status", "inactive").
+//	    Update()
+func (q *Query[T]) Set(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
 	}
-	return u
+
+	// 将更新操作存储在 filter 的特殊键中
+	if _, ok := q.filter["$set"]; !ok {
+		q.filter["$set"] = M{}
+	}
+	q.filter["$set"].(M)[field] = NormalizeValue(value)
+	return q
 }
 
-// Unset 删除字段 ($unset)
+// Inc 增加字段值
 //
 // 示例：
 //
-//	update.Unset("temp_field")
-//	update.Unset("user.old_field")
-func (u *UpdateBuilder) Unset(fields ...string) *UpdateBuilder {
+//	err := users.Find().ID(id).
+//	    Inc("login_count", 1).
+//	    Update()
+func (q *Query[T]) Inc(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$inc"]; !ok {
+		q.filter["$inc"] = M{}
+	}
+	q.filter["$inc"].(M)[field] = value
+	return q
+}
+
+// Mul 乘以字段值
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Mul("score", 2).
+//	    Update()
+func (q *Query[T]) Mul(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$mul"]; !ok {
+		q.filter["$mul"] = M{}
+	}
+	q.filter["$mul"].(M)[field] = value
+	return q
+}
+
+// SetMin 设置字段最小值
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    SetMin("age", 18).
+//	    Update()
+func (q *Query[T]) SetMin(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$min"]; !ok {
+		q.filter["$min"] = M{}
+	}
+	q.filter["$min"].(M)[field] = value
+	return q
+}
+
+// SetMax 设置字段最大值
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    SetMax("age", 60).
+//	    Update()
+func (q *Query[T]) SetMax(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$max"]; !ok {
+		q.filter["$max"] = M{}
+	}
+	q.filter["$max"].(M)[field] = value
+	return q
+}
+
+// Unset 删除字段
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Unset("temp_field").
+//	    Update()
+func (q *Query[T]) Unset(fields ...string) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$unset"]; !ok {
+		q.filter["$unset"] = M{}
+	}
 	for _, field := range fields {
-		u.addOperator("$unset", field, "")
+		q.filter["$unset"].(M)[field] = ""
 	}
-	return u
+	return q
 }
 
-// Inc 递增字段值 ($inc)
+// Rename 重命名字段
 //
 // 示例：
 //
-//	update.Inc("visits", 1)
-//	update.Inc("level", 2)
-//	update.Inc("score", -10)  // 负数表示递减
-func (u *UpdateBuilder) Inc(field string, value any) *UpdateBuilder {
-	u.addOperator("$inc", field, value)
-	return u
-}
-
-// Mul 乘以字段值 ($mul)
-//
-// 示例：
-//
-//	update.Mul("price", 1.1)    // 价格提高10%
-//	update.Mul("discount", 0.8) // 折扣降低20%
-func (u *UpdateBuilder) Mul(field string, value any) *UpdateBuilder {
-	u.addOperator("$mul", field, value)
-	return u
-}
-
-// Min 设置字段最小值 ($min)
-//
-// 只有当新值小于当前值时才更新
-//
-// 示例：
-//
-//	update.Min("price", 100)      // 价格不低于100
-//	update.Min("min_score", 60)   // 最低分不低于60
-func (u *UpdateBuilder) Min(field string, value any) *UpdateBuilder {
-	u.addOperator("$min", field, value)
-	return u
-}
-
-// Max 设置字段最大值 ($max)
-//
-// 只有当新值大于当前值时才更新
-//
-// 示例：
-//
-//	update.Max("stock", 1000)     // 库存不超过1000
-//	update.Max("max_score", 100)  // 最高分不超过100
-func (u *UpdateBuilder) Max(field string, value any) *UpdateBuilder {
-	u.addOperator("$max", field, value)
-	return u
-}
-
-// Rename 重命名字段 ($rename)
-//
-// 示例：
-//
-//	update.Rename("old_name", "new_name")
-//	update.Rename("user.old_field", "user.new_field")
-func (u *UpdateBuilder) Rename(oldField, newField string) *UpdateBuilder {
-	u.addOperator("$rename", oldField, newField)
-	return u
-}
-
-// CurrentDate 设置当前日期 ($currentDate)
-//
-// timestamp 参数为 true 时使用 timestamp 类型，否则使用 date 类型
-//
-// 示例：
-//
-//	update.CurrentDate("updated_at", false)  // date 类型
-//	update.CurrentDate("last_seen", true)    // timestamp 类型
-func (u *UpdateBuilder) CurrentDate(field string, timestamp bool) *UpdateBuilder {
-	var value any = true
-	if timestamp {
-		value = bson.D{{Key: "$type", Value: "timestamp"}}
+//	err := users.Find().ID(id).
+//	    Rename("old_name", "new_name").
+//	    Update()
+func (q *Query[T]) Rename(oldField, newField string) *Query[T] {
+	if q.coll == nil {
+		return q
 	}
-	u.addOperator("$currentDate", field, value)
-	return u
-}
 
-// SetOnInsert 插入时设置字段值 ($setOnInsert)
-//
-// 只在 upsert 操作且文档不存在时设置字段值
-//
-// 示例：
-//
-//	update.SetOnInsert("created_at", time.Now())
-//	update.SetOnInsert("version", 1)
-func (u *UpdateBuilder) SetOnInsert(field string, value any) *UpdateBuilder {
-	u.addOperator("$setOnInsert", field, value)
-	return u
-}
-
-// Push 向数组末尾添加元素 ($push)
-//
-// 示例：
-//
-//	update.Push("tags", "new-tag")
-//	update.Push("items", M{"id": 1, "name": "item1"})
-func (u *UpdateBuilder) Push(field string, value any) *UpdateBuilder {
-	u.addOperator("$push", field, value)
-	return u
-}
-
-// PushEach 向数组末尾添加多个元素 ($push + $each)
-//
-// 示例：
-//
-//	update.PushEach("tags", []string{"tag1", "tag2", "tag3"})
-//	update.PushEach("items", []M{
-//	    {"id": 1, "name": "item1"},
-//	    {"id": 2, "name": "item2"},
-//	})
-func (u *UpdateBuilder) PushEach(field string, values ...any) *UpdateBuilder {
-	u.addOperator("$push", field, bson.D{{Key: "$each", Value: values}})
-	return u
-}
-
-// PushSlice 向数组末尾添加多个元素（限制、排序） ($push + $each + $slice + $sort)
-//
-// slice: 限制数组大小（正数从前保留，负数从后保留，0 清空数组）
-// sort: 排序方式（1 升序，-1 降序，也可以是字段名）
-//
-// 示例：
-//
-//	// 添加并只保留最近10条记录
-//	update.PushSlice("history", -10, -1, item1, item2, item3)
-//
-//	// 添加并按分数排序，只保留前5名
-//	update.PushSlice("top_scores", 5, -1, score1, score2, score3)
-func (u *UpdateBuilder) PushSlice(field string, slice int, sort any, values ...any) *UpdateBuilder {
-	pushDoc := bson.D{{Key: "$each", Value: values}}
-	if slice != 0 {
-		pushDoc = append(pushDoc, bson.E{Key: "$slice", Value: slice})
+	if _, ok := q.filter["$rename"]; !ok {
+		q.filter["$rename"] = M{}
 	}
-	if sort != nil {
-		pushDoc = append(pushDoc, bson.E{Key: "$sort", Value: sort})
+	q.filter["$rename"].(M)[oldField] = newField
+	return q
+}
+
+// ==================== 数组更新操作 ====================
+
+// Push 向数组添加元素
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Push("tags", "new_tag").
+//	    Update()
+func (q *Query[T]) Push(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
 	}
-	u.addOperator("$push", field, pushDoc)
-	return u
-}
 
-// PushPosition 在指定位置插入元素 ($push + $each + $position)
-//
-// position: 插入位置（0 表示开头，-1 表示末尾前）
-//
-// 示例：
-//
-//	// 在数组开头插入
-//	update.PushPosition("items", 0, "item1", "item2")
-//
-//	// 在倒数第二个位置插入
-//	update.PushPosition("items", -1, "new-item")
-func (u *UpdateBuilder) PushPosition(field string, position int, values ...any) *UpdateBuilder {
-	u.addOperator("$push", field, bson.D{
-		{Key: "$each", Value: values},
-		{Key: "$position", Value: position},
-	})
-	return u
-}
-
-// Pull 从数组中删除匹配的元素 ($pull)
-//
-// 示例：
-//
-//	update.Pull("tags", "old-tag")
-//	update.Pull("items", M{"status": "deleted"})
-func (u *UpdateBuilder) Pull(field string, value any) *UpdateBuilder {
-	u.addOperator("$pull", field, value)
-	return u
-}
-
-// PullAll 从数组中删除多个值 ($pullAll)
-//
-// 示例：
-//
-//	update.PullAll("tags", []string{"tag1", "tag2", "tag3"})
-//	update.PullAll("ids", []int{1, 2, 3, 4, 5})
-func (u *UpdateBuilder) PullAll(field string, values ...any) *UpdateBuilder {
-	u.addOperator("$pullAll", field, values)
-	return u
-}
-
-// PullFilter 根据条件从数组中删除元素 ($pull + 条件)
-//
-// 示例：
-//
-//	// 删除价格大于1000的商品
-//	update.PullFilter("items", Filter().Gt("price", 1000))
-//
-//	// 删除已过期的项
-//	update.PullFilter("list", Filter().Lt("expire_at", time.Now()))
-func (u *UpdateBuilder) PullFilter(field string, filter *FilterBuilder) *UpdateBuilder {
-	u.addOperator("$pull", field, filter.BuildM())
-	return u
-}
-
-// Pop 删除数组第一个或最后一个元素 ($pop)
-//
-// position: 1 删除最后一个元素，-1 删除第一个元素
-//
-// 示例：
-//
-//	update.Pop("items", 1)   // 删除最后一个
-//	update.Pop("items", -1)  // 删除第一个
-func (u *UpdateBuilder) Pop(field string, position int) *UpdateBuilder {
-	u.addOperator("$pop", field, position)
-	return u
-}
-
-// AddToSet 向数组添加元素（去重） ($addToSet)
-//
-// 如果元素已存在则不添加
-//
-// 示例：
-//
-//	update.AddToSet("tags", "unique-tag")
-//	update.AddToSet("user_ids", 12345)
-func (u *UpdateBuilder) AddToSet(field string, value any) *UpdateBuilder {
-	u.addOperator("$addToSet", field, value)
-	return u
-}
-
-// AddToSetEach 向数组添加多个元素（去重） ($addToSet + $each)
-//
-// 示例：
-//
-//	update.AddToSetEach("tags", "tag1", "tag2", "tag3")
-//	update.AddToSetEach("skills", "golang", "python", "rust")
-func (u *UpdateBuilder) AddToSetEach(field string, values ...any) *UpdateBuilder {
-	u.addOperator("$addToSet", field, bson.D{{Key: "$each", Value: values}})
-	return u
-}
-
-// Bit 位运算更新 ($bit)
-//
-// operation: "and", "or", "xor"
-//
-// 示例：
-//
-//	update.Bit("flags", "or", 4)   // flags |= 4
-//	update.Bit("flags", "and", 3)  // flags &= 3
-//	update.Bit("flags", "xor", 5)  // flags ^= 5
-func (u *UpdateBuilder) Bit(field string, operation string, value int) *UpdateBuilder {
-	u.addOperator("$bit", field, bson.D{{Key: operation, Value: value}})
-	return u
-}
-
-// Build 构建为 bson.D
-//
-// 示例：
-//
-//	update := Update().Set("name", "张三").Inc("age", 1)
-//	bsonD := update.Build()
-func (u *UpdateBuilder) Build() bson.D {
-	result := make(bson.D, 0, len(u.updates))
-	for op, fields := range u.updates {
-		result = append(result, bson.E{Key: op, Value: fields})
+	if _, ok := q.filter["$push"]; !ok {
+		q.filter["$push"] = M{}
 	}
-	return result
+	q.filter["$push"].(M)[field] = value
+	return q
 }
 
-// BuildM 构建为 bson.M
+// PushAll 向数组添加多个元素
 //
 // 示例：
 //
-//	update := Update().Set("name", "张三").Inc("age", 1)
-//	bsonM := update.BuildM()
-func (u *UpdateBuilder) BuildM() bson.M {
-	result := make(bson.M, len(u.updates))
-	for op, fields := range u.updates {
-		opMap := make(bson.M, len(fields))
-		for _, field := range fields {
-			opMap[field.Key] = field.Value
+//	err := users.Find().ID(id).
+//	    PushAll("tags", []string{"tag1", "tag2"}).
+//	    Update()
+func (q *Query[T]) PushAll(field string, values []interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$push"]; !ok {
+		q.filter["$push"] = M{}
+	}
+	q.filter["$push"].(M)[field] = M{"$each": values}
+	return q
+}
+
+// Pull 从数组删除元素
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Pull("tags", "old_tag").
+//	    Update()
+func (q *Query[T]) Pull(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$pull"]; !ok {
+		q.filter["$pull"] = M{}
+	}
+	q.filter["$pull"].(M)[field] = value
+	return q
+}
+
+// PullAll 从数组删除多个元素
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    PullAll("tags", []string{"tag1", "tag2"}).
+//	    Update()
+func (q *Query[T]) PullAll(field string, values []interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$pullAll"]; !ok {
+		q.filter["$pullAll"] = M{}
+	}
+	q.filter["$pullAll"].(M)[field] = values
+	return q
+}
+
+// AddToSet 向数组添加元素（去重）
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    AddToSet("roles", "admin").
+//	    Update()
+func (q *Query[T]) AddToSet(field string, value interface{}) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$addToSet"]; !ok {
+		q.filter["$addToSet"] = M{}
+	}
+	q.filter["$addToSet"].(M)[field] = value
+	return q
+}
+
+// Pop 从数组移除第一个或最后一个元素
+//
+// position: 1 移除最后一个, -1 移除第一个
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Pop("tags", 1).  // 移除最后一个
+//	    Update()
+func (q *Query[T]) Pop(field string, position int) *Query[T] {
+	if q.coll == nil {
+		return q
+	}
+
+	if _, ok := q.filter["$pop"]; !ok {
+		q.filter["$pop"] = M{}
+	}
+	q.filter["$pop"].(M)[field] = position
+	return q
+}
+
+// ==================== 执行更新操作 ====================
+
+// buildUpdateDoc 构建更新文档
+func (q *Query[T]) buildUpdateDoc() M {
+	update := M{}
+
+	// 提取更新操作（不删除，因为 buildFilter 会自动排除）
+	updateOps := []string{"$set", "$inc", "$mul", "$min", "$max", "$unset", "$rename", "$push", "$pull", "$pullAll", "$addToSet", "$pop"}
+	for _, op := range updateOps {
+		if val, ok := q.filter[op]; ok {
+			update[op] = val
 		}
-		result[op] = opMap
 	}
-	return result
+
+	// 应用时间戳
+	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
+		if _, ok := update["$set"]; !ok {
+			update["$set"] = M{}
+		}
+		update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = NormalizeValue(Now())
+	}
+
+	return update
 }
 
-// Clone 克隆更新构建器
+// Update 执行更新（单条）
 //
 // 示例：
 //
-//	update1 := Update().Set("name", "张三")
-//	update2 := update1.Clone().Inc("age", 1)
-func (u *UpdateBuilder) Clone() *UpdateBuilder {
-	newUpdate := Update()
-	for op, fields := range u.updates {
-		newUpdate.updates[op] = make(bson.D, len(fields))
-		copy(newUpdate.updates[op], fields)
+//	err := users.Find().ID(id).
+//	    Set("status", "inactive").
+//	    Update()
+func (q *Query[T]) Update() error {
+	ctx := q.Context()
+	filter := q.buildFilter()
+	update := q.buildUpdateDoc()
+
+	if len(update) == 0 {
+		return ErrEmptyUpdate
 	}
-	return newUpdate
+
+	_, err := q.coll.coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return WrapError(err, "failed to update")
+	}
+
+	return nil
 }
 
-// addOperator 添加操作符
-func (u *UpdateBuilder) addOperator(operator, field string, value any) {
-	if _, exists := u.updates[operator]; !exists {
-		u.updates[operator] = make(bson.D, 0)
+// UpdateMany 执行批量更新
+//
+// 示例：
+//
+//	n, err := users.Find().
+//	    Where("status", "pending").
+//	    Set("status", "active").
+//	    UpdateMany()
+func (q *Query[T]) UpdateMany() (int64, error) {
+	ctx := q.Context()
+	filter := q.buildFilter()
+	update := q.buildUpdateDoc()
+
+	if len(update) == 0 {
+		return 0, ErrEmptyUpdate
 	}
-	u.updates[operator] = append(u.updates[operator], bson.E{Key: field, Value: value})
+
+	result, err := q.coll.coll.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return 0, WrapError(err, "failed to update many")
+	}
+
+	return result.ModifiedCount, nil
+}
+
+// Patch 部分更新（从结构体）
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Patch(&User{Status: "inactive", Age: 30})
+func (q *Query[T]) Patch(doc *T) error {
+	// TODO: 使用反射提取非零值字段
+	// 然后调用 Set 方法
+	return q.Update()
+}
+
+// Replace 完整替换文档
+//
+// 示例：
+//
+//	err := users.Find().ID(id).
+//	    Replace(newUser)
+func (q *Query[T]) Replace(doc *T) error {
+	ctx := q.Context()
+	filter := q.buildFilter()
+
+	// 应用时间戳
+	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
+		applyTimestamps(doc, q.coll.opts.Timestamps, false)
+	}
+
+	_, err := q.coll.coll.ReplaceOne(ctx, filter, doc)
+	if err != nil {
+		return WrapError(err, "failed to replace")
+	}
+
+	return nil
+}
+
+// ==================== FindAndModify 原子操作 ====================
+
+// UpdateAndReturn 更新并返回更新后的文档
+//
+// 示例：
+//
+//	user, err := users.Find().ID(id).
+//	    Set("status", "processing").
+//	    UpdateAndReturn()
+func (q *Query[T]) UpdateAndReturn() (*T, error) {
+	// TODO: 使用 FindOneAndUpdate 实现
+	return nil, nil
+}
+
+// UpdateAndReturnOld 更新并返回更新前的文档
+//
+// 示例：
+//
+//	oldUser, err := users.Find().ID(id).
+//	    Set("status", "processing").
+//	    UpdateAndReturnOld()
+func (q *Query[T]) UpdateAndReturnOld() (*T, error) {
+	// TODO: 使用 FindOneAndUpdate 实现
+	return nil, nil
+}
+
+// ==================== Upsert 插入或更新 ====================
+
+// Upsert 存在则更新，不存在则插入
+//
+// 示例：
+//
+//	err := users.Find().
+//	    Where("email", email).
+//	    Upsert(&user)
+func (q *Query[T]) Upsert(doc *T) error {
+	// TODO: 使用 UpdateOne 的 upsert 选项实现
+	return nil
 }

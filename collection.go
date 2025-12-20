@@ -3,274 +3,375 @@ package mgo
 import (
 	"context"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-// Collection MongoDB 集合封装
-//
-// 提供两个核心入口:
-// - Query() 用于查询操作
-// - Aggs() 用于聚合操作
-//
-// 使用示例：
-//
-//	// 查询
-//	var users []User
-//	err := coll.Query().
-//	    Eq("status", "active").
-//	    Gt("age", 18).
-//	    All(ctx, &users)
-//
-//	// 聚合
-//	var results []Result
-//	err := coll.Aggs().
-//	    Match(Filter().Eq("status", "active")).
-//	    Group("$city", M{"count": Sum(1)}).
-//	    All(ctx, &results)
-//
-//	// 简单插入
-//	id, err := coll.InsertOne(ctx, user)
-type Collection struct {
-	coll       *mongo.Collection
-	softDelete *SoftDeleteConfig
-}
+// ==================== Collection 传统集合封装 ====================
 
-// NewCollection 创建集合封装（内部使用）
+// Collection MongoDB 集合封装（传统方式）
 //
-// 对外使用 Client.Collection() 或 Database.Collection() 方法
+// 提供非泛型的集合操作，适用于动态类型场景
 //
 // 示例：
 //
-//	// 不启用软删除
-//	coll := mgo.newCollection(mongoCollection)
-//
-//	// 启用软删除
-//	coll := mgo.newCollection(mongoCollection, mgo.WithSoftDelete())
-//
-//	// 自定义软删除字段
-//	coll := mgo.newCollection(mongoCollection, mgo.WithSoftDelete("removed_at"))
-func newCollection(coll *mongo.Collection, opts ...CollectionOption) *Collection {
-	c := &Collection{
-		coll:       coll,
-		softDelete: defaultSoftDeleteConfig(),
+//	users := db.Collection("users")
+//	var user User
+//	err := users.FindOne(mgo.M{"email": email}, &user)
+type Collection struct {
+	coll *mongo.Collection
+	db   *Database
+	opts *CollectionOptions
+}
+
+// newCollection 创建新的集合实例
+func newCollection(db *Database, coll *mongo.Collection, opts ...CollectionOption) *Collection {
+	options := &CollectionOptions{
+		Context: db.Context(),
 	}
+
 	for _, opt := range opts {
-		opt(c)
+		opt(options)
 	}
-	return c
+
+	return &Collection{
+		coll: coll,
+		db:   db,
+		opts: options,
+	}
 }
 
 // Name 获取集合名称
+//
+// 示例：
+//
+//	name := coll.Name()
 func (c *Collection) Name() string {
 	return c.coll.Name()
 }
 
-// Database 获取数据库
-func (c *Collection) Database() *mongo.Database {
-	return c.coll.Database()
+// Database 获取所属数据库
+//
+// 示例：
+//
+//	db := coll.Database()
+func (c *Collection) Database() *Database {
+	return c.db
 }
 
-// Native 返回原生 mongo.Collection（用于高级场景）
+// Native 返回原生 mongo.Collection
+//
+// 示例：
+//
+//	nativeColl := coll.Native()
 func (c *Collection) Native() *mongo.Collection {
 	return c.coll
 }
 
-// ==================== 核心入口 ====================
+// Context 获取默认上下文
+func (c *Collection) Context() context.Context {
+	return getContext(c.opts.Context)
+}
 
-// Query 创建查询构建器
-//
-// 这是查询操作的唯一入口，支持所有查询相关功能
+// Options 获取集合选项
+func (c *Collection) Options() *CollectionOptions {
+	return c.opts
+}
+
+// ==================== 基础查询方法 ====================
+
+// FindOne 查询单条文档
 //
 // 示例：
 //
-//	// 查询单条
 //	var user User
-//	err := coll.Query().Eq("_id", id).One(ctx, &user)
-//
-//	// 查询多条
-//	var users []User
-//	err := coll.Query().
-//	    Eq("status", "active").
-//	    Select("name", "email").
-//	    Desc("created_at").
-//	    Limit(10).
-//	    All(ctx, &users)
-//
-//	// 计数
-//	count, err := coll.Query().Eq("status", "active").Count(ctx)
-//
-//	// 更新
-//	result, err := coll.Query().
-//	    Eq("_id", id).
-//	    UpdateOne(ctx, Update().Set("status", "inactive"))
-//
-//	// 删除
-//	result, err := coll.Query().Eq("status", "expired").DeleteMany(ctx)
-func (c *Collection) Query(ctx context.Context) *QueryBuilder {
-	return newQueryBuilder(c, ctx)
+//	err := coll.FindOne(mgo.M{"email": email}, &user)
+func (c *Collection) FindOne(filter interface{}, result interface{}) error {
+	ctx := c.Context()
+	err := c.coll.FindOne(ctx, filter).Decode(result)
+	if err != nil {
+		return WrapError(err, "failed to find one")
+	}
+	return nil
 }
 
-// Aggs 创建聚合构建器
-//
-// 这是聚合操作的唯一入口
+// FindByID 根据 ID 查询文档
 //
 // 示例：
 //
-//	// 分组统计
-//	var results []Result
-//	err := coll.Aggs().
-//	    Match(Filter().Eq("status", "active")).
-//	    Group("$city", M{
-//	        "total": Sum(1),
-//	        "avgAge": Avg("$age"),
-//	    }).
-//	    SortDesc("total").
-//	    All(ctx, &results)
-//
-//	// 关联查询
-//	err := coll.Aggs().
-//	    Lookup("orders", "user_id", "_id", "orders").
-//	    Unwind("$orders").
-//	    All(ctx, &results)
-func (c *Collection) Aggs(ctx context.Context) *AggsBuilder {
-	return newAggsBuilder(c, ctx)
+//	var user User
+//	err := coll.FindByID(id, &user)
+func (c *Collection) FindByID(id interface{}, result interface{}) error {
+	return c.FindOne(M{"_id": id}, result)
 }
 
-// ==================== 简单 CRUD 操作 ====================
-// 这些方法用于最基本的操作，不需要构建器的场景
+// Find 查询多条文档
+//
+// 示例：
+//
+//	var users []User
+//	err := coll.Find(mgo.M{"status": "active"}, &users)
+func (c *Collection) Find(filter interface{}, results interface{}) error {
+	ctx := c.Context()
+	cursor, err := c.coll.Find(ctx, filter)
+	if err != nil {
+		return WrapError(err, "failed to find")
+	}
+	defer cursor.Close(ctx)
+
+	if err := cursor.All(ctx, results); err != nil {
+		return WrapError(err, "failed to decode results")
+	}
+	return nil
+}
+
+// ==================== 插入方法 ====================
 
 // InsertOne 插入单条文档
 //
 // 示例：
 //
-//	result, err := coll.InsertOne(ctx, user)
-//	insertedID := result.InsertedID
-func (c *Collection) InsertOne(ctx context.Context, document any) (*mongo.InsertOneResult, error) {
-	return c.coll.InsertOne(ctx, document)
+//	id, err := coll.InsertOne(&user)
+func (c *Collection) InsertOne(doc interface{}) (ObjectID, error) {
+	ctx := c.Context()
+	result, err := c.coll.InsertOne(ctx, doc)
+	if err != nil {
+		return NilObjectID, WrapError(err, "failed to insert one")
+	}
+
+	if oid, ok := result.InsertedID.(ObjectID); ok {
+		return oid, nil
+	}
+
+	return NilObjectID, nil
 }
 
 // InsertMany 插入多条文档
 //
 // 示例：
 //
-//	result, err := coll.InsertMany(ctx, []any{user1, user2, user3})
-//	insertedIDs := result.InsertedIDs
-func (c *Collection) InsertMany(ctx context.Context, documents []any) (*mongo.InsertManyResult, error) {
-	return c.coll.InsertMany(ctx, documents)
-}
-
-// UpdateByID 通过 ID 更新文档（快捷方法）
-//
-// 示例：
-//
-//	result, err := coll.UpdateByID(ctx, id,
-//	    Update().Set("status", "inactive"))
-func (c *Collection) UpdateByID(ctx context.Context, id any, update any) (*mongo.UpdateResult, error) {
-	// 这里没有 QueryBuilder 实例，所以我们需要手动处理 update
-	var updateDoc any
-	if ub, ok := update.(*UpdateBuilder); ok {
-		updateDoc = ub.Build()
-	} else {
-		updateDoc = update
+//	ids, err := coll.InsertMany([]interface{}{user1, user2, user3})
+func (c *Collection) InsertMany(docs []interface{}) ([]ObjectID, error) {
+	ctx := c.Context()
+	result, err := c.coll.InsertMany(ctx, docs)
+	if err != nil {
+		return nil, WrapError(err, "failed to insert many")
 	}
-	return c.coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, updateDoc)
+
+	ids := make([]ObjectID, 0, len(result.InsertedIDs))
+	for _, id := range result.InsertedIDs {
+		if oid, ok := id.(ObjectID); ok {
+			ids = append(ids, oid)
+		}
+	}
+
+	return ids, nil
 }
 
-// DeleteByID 通过 ID 删除文档（快捷方法）
+// ==================== 更新方法 ====================
+
+// UpdateOne 更新单条文档
 //
 // 示例：
 //
-//	result, err := coll.DeleteByID(ctx, id)
-func (c *Collection) DeleteByID(ctx context.Context, id any) (*mongo.DeleteResult, error) {
-	return c.coll.DeleteOne(ctx, bson.D{{Key: "_id", Value: id}})
+//	err := coll.UpdateOne(
+//	    mgo.M{"_id": id},
+//	    mgo.M{"$set": mgo.M{"status": "inactive"}},
+//	)
+func (c *Collection) UpdateOne(filter, update interface{}) error {
+	ctx := c.Context()
+	_, err := c.coll.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return WrapError(err, "failed to update one")
+	}
+	return nil
 }
 
-// ReplaceByID 通过 ID 替换文档（快捷方法）
+// UpdateByID 根据 ID 更新文档
 //
 // 示例：
 //
-//	result, err := coll.ReplaceByID(ctx, id, newUser)
-func (c *Collection) ReplaceByID(ctx context.Context, id any, replacement any) (*mongo.UpdateResult, error) {
-	return c.coll.ReplaceOne(ctx, bson.D{{Key: "_id", Value: id}}, replacement)
+//	err := coll.UpdateByID(id, mgo.M{"$set": mgo.M{"status": "inactive"}})
+func (c *Collection) UpdateByID(id, update interface{}) error {
+	return c.UpdateOne(M{"_id": id}, update)
 }
 
-// Count 统计所有文档数量（快捷方法）
+// UpdateMany 更新多条文档
 //
 // 示例：
 //
-//	count, err := coll.Count(ctx)
-//
-// 注意：如果需要条件计数，请使用 Query().Count()
-func (c *Collection) Count(ctx context.Context) (int64, error) {
-	return c.coll.EstimatedDocumentCount(ctx)
+//	n, err := coll.UpdateMany(
+//	    mgo.M{"status": "pending"},
+//	    mgo.M{"$set": mgo.M{"status": "active"}},
+//	)
+func (c *Collection) UpdateMany(filter, update interface{}) (int64, error) {
+	ctx := c.Context()
+	result, err := c.coll.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return 0, WrapError(err, "failed to update many")
+	}
+	return result.ModifiedCount, nil
 }
 
-// Drop 删除集合
+// ReplaceOne 替换单条文档
 //
 // 示例：
 //
-//	err := coll.Drop(ctx)
-func (c *Collection) Drop(ctx context.Context) error {
-	return c.coll.Drop(ctx)
+//	err := coll.ReplaceOne(mgo.M{"_id": id}, newUser)
+func (c *Collection) ReplaceOne(filter, replacement interface{}) error {
+	ctx := c.Context()
+	_, err := c.coll.ReplaceOne(ctx, filter, replacement)
+	if err != nil {
+		return WrapError(err, "failed to replace one")
+	}
+	return nil
 }
 
-// ==================== 索引操作 ====================
+// ==================== 删除方法 ====================
+
+// DeleteOne 删除单条文档
+//
+// 示例：
+//
+//	err := coll.DeleteOne(mgo.M{"_id": id})
+func (c *Collection) DeleteOne(filter interface{}) error {
+	ctx := c.Context()
+	_, err := c.coll.DeleteOne(ctx, filter)
+	if err != nil {
+		return WrapError(err, "failed to delete one")
+	}
+	return nil
+}
+
+// DeleteByID 根据 ID 删除文档
+//
+// 示例：
+//
+//	err := coll.DeleteByID(id)
+func (c *Collection) DeleteByID(id interface{}) error {
+	return c.DeleteOne(M{"_id": id})
+}
+
+// DeleteMany 删除多条文档
+//
+// 示例：
+//
+//	n, err := coll.DeleteMany(mgo.M{"status": "expired"})
+func (c *Collection) DeleteMany(filter interface{}) (int64, error) {
+	ctx := c.Context()
+	result, err := c.coll.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, WrapError(err, "failed to delete many")
+	}
+	return result.DeletedCount, nil
+}
+
+// ==================== 聚合方法 ====================
+
+// CountDocuments 统计文档数量
+//
+// 示例：
+//
+//	count, err := coll.CountDocuments(mgo.M{"status": "active"})
+func (c *Collection) CountDocuments(filter interface{}) (int64, error) {
+	ctx := c.Context()
+	count, err := c.coll.CountDocuments(ctx, filter)
+	if err != nil {
+		return 0, WrapError(err, "failed to count documents")
+	}
+	return count, nil
+}
+
+// Distinct 获取字段的不重复值
+//
+// 示例：
+//
+//	values, err := coll.Distinct("city", mgo.M{"status": "active"})
+func (c *Collection) Distinct(fieldName string, filter interface{}) ([]interface{}, error) {
+	ctx := c.Context()
+	distinctResult := c.coll.Distinct(ctx, fieldName, filter)
+	if distinctResult.Err() != nil {
+		return nil, WrapError(distinctResult.Err(), "failed to get distinct values")
+	}
+
+	var values []interface{}
+	if err := distinctResult.Decode(&values); err != nil {
+		return nil, WrapError(err, "failed to decode distinct values")
+	}
+
+	return values, nil
+}
+
+// Aggregate 执行聚合查询
+//
+// 示例：
+//
+//	pipeline := mgo.Pipeline{
+//	    {{"$match", mgo.M{"status": "active"}}},
+//	    {{"$group", mgo.M{"_id": "$city", "count": mgo.M{"$sum": 1}}}},
+//	}
+//	var results []CityStats
+//	err := coll.Aggregate(pipeline, &results)
+func (c *Collection) Aggregate(pipeline interface{}, results interface{}) error {
+	ctx := c.Context()
+	cursor, err := c.coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		return WrapError(err, "failed to aggregate")
+	}
+	defer cursor.Close(ctx)
+
+	if err := cursor.All(ctx, results); err != nil {
+		return WrapError(err, "failed to decode aggregate results")
+	}
+	return nil
+}
+
+// ==================== 索引方法 ====================
 
 // CreateIndex 创建索引
 //
 // 示例：
 //
-//	// 单字段索引
-//	err := coll.CreateIndex(ctx, "email", true)  // 唯一索引
-//
-//	// 组合索引（使用原生方式）
-//	indexModel := mongo.IndexModel{
-//	    Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}},
-//	}
-//	_, err := coll.Native().Indexes().CreateOne(ctx, indexModel)
-func (c *Collection) CreateIndex(ctx context.Context, field string, unique bool) error {
-	indexModel := mongo.IndexModel{
-		Keys: bson.D{{Key: field, Value: 1}},
-	}
-	if unique {
-		indexModel.Options = options.Index().SetUnique(true)
-	}
-	_, err := c.coll.Indexes().CreateOne(ctx, indexModel)
-	return err
+//	err := coll.CreateIndex("email", true) // unique index
+func (c *Collection) CreateIndex(field string, unique bool) error {
+	// TODO: 实现索引创建
+	return nil
 }
 
 // DropIndex 删除索引
 //
 // 示例：
 //
-//	err := coll.DropIndex(ctx, "email_1")
-func (c *Collection) DropIndex(ctx context.Context, name string) error {
-	return c.coll.Indexes().DropOne(ctx, name)
+//	err := coll.DropIndex("email_1")
+func (c *Collection) DropIndex(name string) error {
+	// TODO: 实现索引删除
+	return nil
 }
 
-// ListIndexes 列出所有索引
+// ==================== 其他方法 ====================
+
+// Drop 删除集合
 //
 // 示例：
 //
-//	cursor, err := coll.ListIndexes(ctx)
-func (c *Collection) ListIndexes(ctx context.Context) (*mongo.Cursor, error) {
-	return c.coll.Indexes().List(ctx)
+//	err := coll.Drop()
+func (c *Collection) Drop() error {
+	ctx := c.Context()
+	if err := c.coll.Drop(ctx); err != nil {
+		return WrapError(err, "failed to drop collection")
+	}
+	return nil
 }
 
-// ==================== 批量操作 ====================
-
-// BulkWrite 批量写入操作
+// EstimatedDocumentCount 估算文档数量（快速）
 //
 // 示例：
 //
-//	models := []mongo.WriteModel{
-//	    mongo.NewInsertOneModel().SetDocument(user1),
-//	    mongo.NewUpdateOneModel().SetFilter(...).SetUpdate(...),
-//	    mongo.NewDeleteOneModel().SetFilter(...),
-//	}
-//	result, err := coll.BulkWrite(ctx, models)
-func (c *Collection) BulkWrite(ctx context.Context, models []mongo.WriteModel) (*mongo.BulkWriteResult, error) {
-	return c.coll.BulkWrite(ctx, models)
+//	count, err := coll.EstimatedDocumentCount()
+func (c *Collection) EstimatedDocumentCount() (int64, error) {
+	ctx := c.Context()
+	count, err := c.coll.EstimatedDocumentCount(ctx)
+	if err != nil {
+		return 0, WrapError(err, "failed to estimate document count")
+	}
+	return count, nil
 }

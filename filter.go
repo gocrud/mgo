@@ -1,431 +1,318 @@
 package mgo
 
-import (
-	"regexp"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
-
-// FilterBuilder 查询条件构建器，用于构建 MongoDB 查询过滤器
-// 完全消除 "$gte", "$in" 等操作符字符串，提供流畅的链式 API
-//
-// 示例：
-//
-//	// 基础查询
-//	filter := mgo.Filter().
-//	    Eq("status", "active").
-//	    Gte("age", 18).
-//	    In("city", "北京", "上海", "深圳")
-//
-//	// 复杂逻辑
-//	filter := mgo.Filter().
-//	    Eq("status", "active").
-//	    Or(
-//	        mgo.Filter().Eq("vip", true),
-//	        mgo.Filter().Gte("level", 5),
-//	    )
-type FilterBuilder struct {
-	conditions bson.D
-}
-
-// Filter 创建新的过滤器构建器
-//
-// 使用简洁的语法：
-//
-//	filter := mgo.Filter().Eq("status", "active")
-//
-//	// 在聚合中使用
-//	coll.Aggs(ctx).Match(mgo.Filter().Eq("status", "active"))
-//
-//	// 在逻辑操作中使用
-//	coll.Query(ctx).Or(
-//	    mgo.Filter().Eq("vip", true),
-//	    mgo.Filter().Gte("level", 5),
-//	)
-func Filter() *FilterBuilder {
-	return &FilterBuilder{conditions: bson.D{}}
-}
-
-// ===== 基础条件方法 =====
+// ==================== 条件构建函数 ====================
 
 // Eq 等于条件
 //
-// MongoDB: {field: value}
-//
 // 示例：
 //
-//	filter := mgo.Filter().Eq("status", "active")
-//	filter := mgo.Filter().Eq("age", 25)
-func (f *FilterBuilder) Eq(field string, value any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{Key: field, Value: value})
-	return f
+//	filter := mgo.Eq("status", "active")
+//	// 生成: {"status": "active"}
+func Eq(field string, value interface{}) M {
+	return M{field: value}
 }
 
-// Ne 不等于条件 ($ne)
-//
-// MongoDB: {field: {$ne: value}}
+// Ne 不等于条件
 //
 // 示例：
 //
-//	filter := mgo.Filter().Ne("status", "deleted")
-func (f *FilterBuilder) Ne(field string, value any) *FilterBuilder {
-	f.addOperator(field, "$ne", value)
-	return f
+//	filter := mgo.Ne("status", "deleted")
+//	// 生成: {"status": {"$ne": "deleted"}}
+func Ne(field string, value interface{}) M {
+	return M{field: M{"$ne": value}}
 }
 
-// Gt 大于条件 ($gt)
-//
-// MongoDB: {field: {$gt: value}}
+// Gt 大于条件
 //
 // 示例：
 //
-//	filter := mgo.Filter().Gt("age", 18)
-//	filter := mgo.Filter().Gt("price", 100.0)
-func (f *FilterBuilder) Gt(field string, value any) *FilterBuilder {
-	f.addOperator(field, "$gt", value)
-	return f
+//	filter := mgo.Gt("age", 18)
+//	// 生成: {"age": {"$gt": 18}}
+func Gt(field string, value interface{}) M {
+	return M{field: M{"$gt": value}}
 }
 
-// Gte 大于等于条件 ($gte)
-//
-// MongoDB: {field: {$gte: value}}
+// Gte 大于等于条件
 //
 // 示例：
 //
-//	filter := mgo.Filter().Gte("age", 18)
-//	filter := mgo.Filter().Gte("created_at", startDate)
-func (f *FilterBuilder) Gte(field string, value any) *FilterBuilder {
-	f.addOperator(field, "$gte", value)
-	return f
+//	filter := mgo.Gte("age", 18)
+//	// 生成: {"age": {"$gte": 18}}
+func Gte(field string, value interface{}) M {
+	return M{field: M{"$gte": value}}
 }
 
-// Lt 小于条件 ($lt)
-//
-// MongoDB: {field: {$lt: value}}
+// Lt 小于条件
 //
 // 示例：
 //
-//	filter := mgo.Filter().Lt("age", 65)
-//	filter := mgo.Filter().Lt("stock", 10)
-func (f *FilterBuilder) Lt(field string, value any) *FilterBuilder {
-	f.addOperator(field, "$lt", value)
-	return f
+//	filter := mgo.Lt("age", 60)
+//	// 生成: {"age": {"$lt": 60}}
+func Lt(field string, value interface{}) M {
+	return M{field: M{"$lt": value}}
 }
 
-// Lte 小于等于条件 ($lte)
-//
-// MongoDB: {field: {$lte: value}}
+// Lte 小于等于条件
 //
 // 示例：
 //
-//	filter := mgo.Filter().Lte("age", 65)
-//	filter := mgo.Filter().Lte("price", 1000.0)
-func (f *FilterBuilder) Lte(field string, value any) *FilterBuilder {
-	f.addOperator(field, "$lte", value)
-	return f
+//	filter := mgo.Lte("age", 60)
+//	// 生成: {"age": {"$lte": 60}}
+func Lte(field string, value interface{}) M {
+	return M{field: M{"$lte": value}}
 }
 
-// Between 范围查询（包含边界）
-//
-// MongoDB: {field: {$gte: min, $lte: max}}
+// In 包含于条件
 //
 // 示例：
 //
-//	// 年龄在 18-65 之间
-//	filter := mgo.Filter().Between("age", 18, 65)
-//	// 价格在 100-1000 之间
-//	filter := mgo.Filter().Between("price", 100.0, 1000.0)
-func (f *FilterBuilder) Between(field string, min, max any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key: field,
-		Value: bson.D{
-			{Key: "$gte", Value: min},
-			{Key: "$lte", Value: max},
+//	filter := mgo.In("status", "active", "pending")
+//	// 生成: {"status": {"$in": ["active", "pending"]}}
+func In(field string, values ...interface{}) M {
+	return M{field: M{"$in": values}}
+}
+
+// Nin 不包含于条件
+//
+// 示例：
+//
+//	filter := mgo.Nin("status", "deleted", "expired")
+//	// 生成: {"status": {"$nin": ["deleted", "expired"]}}
+func Nin(field string, values ...interface{}) M {
+	return M{field: M{"$nin": values}}
+}
+
+// Exists 字段存在条件
+//
+// 示例：
+//
+//	filter := mgo.Exists("email", true)
+//	// 生成: {"email": {"$exists": true}}
+func Exists(field string, exists bool) M {
+	return M{field: M{"$exists": exists}}
+}
+
+// Type 字段类型条件
+//
+// 示例：
+//
+//	filter := mgo.Type("age", "int")
+//	// 生成: {"age": {"$type": "int"}}
+func Type(field string, bsonType string) M {
+	return M{field: M{"$type": bsonType}}
+}
+
+// RegexFilter 正则表达式条件
+//
+// 示例：
+//
+//	filter := mgo.RegexFilter("name", "^John", "i")
+//	// 生成: {"name": {"$regex": "^John", "$options": "i"}}
+func RegexFilter(field, pattern, options string) M {
+	return M{field: M{
+		"$regex":   pattern,
+		"$options": options,
+	}}
+}
+
+// Like 模糊匹配条件（简化版正则）
+//
+// 示例：
+//
+//	filter := mgo.Like("name", "John")
+//	// 生成: {"name": {"$regex": "John", "$options": "i"}}
+func Like(field, value string) M {
+	return M{field: M{
+		"$regex":   value,
+		"$options": "i",
+	}}
+}
+
+// StartsWith 以...开头条件
+//
+// 示例：
+//
+//	filter := mgo.StartsWith("name", "John")
+//	// 生成: {"name": {"$regex": "^John", "$options": "i"}}
+func StartsWith(field, value string) M {
+	return M{field: M{
+		"$regex":   "^" + value,
+		"$options": "i",
+	}}
+}
+
+// EndsWith 以...结尾条件
+//
+// 示例：
+//
+//	filter := mgo.EndsWith("email", "@example.com")
+//	// 生成: {"email": {"$regex": "@example\\.com$", "$options": "i"}}
+func EndsWith(field, value string) M {
+	return M{field: M{
+		"$regex":   value + "$",
+		"$options": "i",
+	}}
+}
+
+// ==================== 数组条件 ====================
+
+// All 数组包含所有指定值
+//
+// 示例：
+//
+//	filter := mgo.All("tags", "go", "mongodb")
+//	// 生成: {"tags": {"$all": ["go", "mongodb"]}}
+func All(field string, values ...interface{}) M {
+	return M{field: M{"$all": values}}
+}
+
+// ElemMatch 数组元素匹配条件
+//
+// 示例：
+//
+//	filter := mgo.ElemMatch("orders", mgo.M{"status": "pending", "amount": mgo.M{"$gt": 100}})
+//	// 生成: {"orders": {"$elemMatch": {"status": "pending", "amount": {"$gt": 100}}}}
+func ElemMatch(field string, condition M) M {
+	return M{field: M{"$elemMatch": condition}}
+}
+
+// Size 数组大小条件
+//
+// 示例：
+//
+//	filter := mgo.Size("tags", 3)
+//	// 生成: {"tags": {"$size": 3}}
+func Size(field string, size int) M {
+	return M{field: M{"$size": size}}
+}
+
+// ==================== 地理位置条件 ====================
+
+// Near 附近位置条件
+//
+// 示例：
+//
+//	filter := mgo.Near("location", 116.4, 39.9, 5000) // 5km 范围内
+//	// 生成: {"location": {"$near": {"$geometry": {"type": "Point", "coordinates": [116.4, 39.9]}, "$maxDistance": 5000}}}
+func Near(field string, longitude, latitude float64, maxDistance int) M {
+	return M{field: M{
+		"$near": M{
+			"$geometry": M{
+				"type":        "Point",
+				"coordinates": []float64{longitude, latitude},
+			},
+			"$maxDistance": maxDistance,
 		},
-	})
-	return f
+	}}
 }
 
-// BetweenExclusive 范围查询（不包含边界）
-//
-// MongoDB: {field: {$gt: min, $lt: max}}
+// GeoWithin 地理范围内条件
 //
 // 示例：
 //
-//	// 年龄在 18-65 之间（不包含18和65）
-//	filter := mgo.Filter().BetweenExclusive("age", 18, 65)
-func (f *FilterBuilder) BetweenExclusive(field string, min, max any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key: field,
-		Value: bson.D{
-			{Key: "$gt", Value: min},
-			{Key: "$lt", Value: max},
-		},
-	})
-	return f
+//	// 圆形范围
+//	filter := mgo.GeoWithin("location", mgo.M{
+//	    "$centerSphere": []interface{}{[]float64{116.4, 39.9}, 0.001},
+//	})
+func GeoWithin(field string, geometry M) M {
+	return M{field: M{"$geoWithin": geometry}}
 }
 
-// ===== 数组和集合操作 =====
+// ==================== 文本搜索 ====================
 
-// In 在列表中 ($in)
-//
-// MongoDB: {field: {$in: [values...]}}
+// Text 全文搜索条件
 //
 // 示例：
 //
-//	// 城市在指定列表中
-//	filter := mgo.Filter().In("city", "北京", "上海", "深圳")
-//	// 状态在指定列表中
-//	filter := mgo.Filter().In("status", "pending", "approved")
-func (f *FilterBuilder) In(field string, values ...any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$in", values),
-	})
-	return f
+//	filter := mgo.Text("search term")
+//	// 生成: {"$text": {"$search": "search term"}}
+func Text(search string) M {
+	return M{"$text": M{"$search": search}}
 }
 
-// NotIn 不在列表中 ($nin)
-//
-// MongoDB: {field: {$nin: [values...]}}
+// TextWithLanguage 指定语言的全文搜索
 //
 // 示例：
 //
-//	filter := mgo.Filter().NotIn("status", "deleted", "archived")
-func (f *FilterBuilder) NotIn(field string, values ...any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$nin", values),
-	})
-	return f
+//	filter := mgo.TextWithLanguage("搜索词", "chinese")
+//	// 生成: {"$text": {"$search": "搜索词", "$language": "chinese"}}
+func TextWithLanguage(search, language string) M {
+	return M{"$text": M{
+		"$search":   search,
+		"$language": language,
+	}}
 }
 
-// All 数组包含所有元素 ($all)
-//
-// MongoDB: {field: {$all: [values...]}}
+// ==================== 高级条件 ====================
+
+// Mod 取模条件
 //
 // 示例：
 //
-//	// tags 必须包含所有指定标签
-//	filter := mgo.Filter().All("tags", "active", "verified", "premium")
-func (f *FilterBuilder) All(field string, values ...any) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$all", values),
-	})
-	return f
+//	filter := mgo.Mod("age", 5, 0) // age % 5 == 0
+//	// 生成: {"age": {"$mod": [5, 0]}}
+func Mod(field string, divisor, remainder int) M {
+	return M{field: M{"$mod": []int{divisor, remainder}}}
 }
 
-// ElemMatch 数组元素匹配 ($elemMatch)
-//
-// MongoDB: {field: {$elemMatch: {condition...}}}
+// Where JavaScript 表达式条件
 //
 // 示例：
 //
-//	// items 数组中至少有一个元素的 price > 1000
-//	filter := mgo.Filter().ElemMatch("items",
-//	    mgo.Filter().Gt("price", 1000),
-//	)
-//
-//	// 复杂匹配
-//	filter := mgo.Filter().ElemMatch("orders",
-//	    mgo.Filter().
-//	        Eq("status", "completed").
-//	        Gt("amount", 100),
-//	)
-func (f *FilterBuilder) ElemMatch(field string, subFilter *FilterBuilder) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$elemMatch", subFilter.Build()),
-	})
-	return f
+//	filter := mgo.Where("this.age > 18 && this.status === 'active'")
+//	// 生成: {"$where": "this.age > 18 && this.status === 'active'"}
+func Where(js string) M {
+	return M{"$where": js}
 }
 
-// Size 数组大小 ($size)
-//
-// MongoDB: {field: {$size: n}}
+// ExprFilter 聚合表达式条件
 //
 // 示例：
 //
-//	// tags 数组必须包含恰好 3 个元素
-//	filter := mgo.Filter().Size("tags", 3)
-func (f *FilterBuilder) Size(field string, size int) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$size", size),
-	})
-	return f
+//	filter := mgo.ExprFilter(mgo.M{"$gt": []string{"$spent", "$budget"}})
+//	// 生成: {"$expr": {"$gt": ["$spent", "$budget"]}}
+func ExprFilter(expression M) M {
+	return M{"$expr": expression}
 }
 
-// ===== 字段存在性 =====
+// ==================== 位操作条件 ====================
 
-// Exists 字段存在 ($exists: true)
-//
-// MongoDB: {field: {$exists: true}}
+// BitsAllSet 位全部为 1
 //
 // 示例：
 //
-//	// email 字段必须存在
-//	filter := mgo.Filter().Exists("email")
-func (f *FilterBuilder) Exists(field string) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$exists", true),
-	})
-	return f
+//	filter := mgo.BitsAllSet("permissions", 5) // 二进制 101
+//	// 生成: {"permissions": {"$bitsAllSet": 5}}
+func BitsAllSet(field string, bitmask int) M {
+	return M{field: M{"$bitsAllSet": bitmask}}
 }
 
-// NotExists 字段不存在 ($exists: false)
-//
-// MongoDB: {field: {$exists: false}}
+// BitsAnySet 位任意为 1
 //
 // 示例：
 //
-//	// deleted_at 字段不存在
-//	filter := mgo.Filter().NotExists("deleted_at")
-func (f *FilterBuilder) NotExists(field string) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$exists", false),
-	})
-	return f
+//	filter := mgo.BitsAnySet("permissions", 5)
+//	// 生成: {"permissions": {"$bitsAnySet": 5}}
+func BitsAnySet(field string, bitmask int) M {
+	return M{field: M{"$bitsAnySet": bitmask}}
 }
 
-// IsNull 字段为 null
-//
-// MongoDB: {field: null}
+// BitsAllClear 位全部为 0
 //
 // 示例：
 //
-//	// deleted_at 为 null
-//	filter := mgo.Filter().IsNull("deleted_at")
-func (f *FilterBuilder) IsNull(field string) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{Key: field, Value: nil})
-	return f
+//	filter := mgo.BitsAllClear("permissions", 5)
+//	// 生成: {"permissions": {"$bitsAllClear": 5}}
+func BitsAllClear(field string, bitmask int) M {
+	return M{field: M{"$bitsAllClear": bitmask}}
 }
 
-// IsNotNull 字段不为 null ($ne: null)
-//
-// MongoDB: {field: {$ne: null}}
+// BitsAnyClear 位任意为 0
 //
 // 示例：
 //
-//	// email 不为 null
-//	filter := mgo.Filter().IsNotNull("email")
-func (f *FilterBuilder) IsNotNull(field string) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$ne", nil),
-	})
-	return f
-}
-
-// ===== 字符串匹配 =====
-
-// Regex 正则匹配 ($regex)
-//
-// MongoDB: {field: {$regex: pattern, $options: options}}
-//
-// 示例：
-//
-//	// 名字以 "张" 开头（不区分大小写）
-//	filter := mgo.Filter().Regex("name", "^张", "i")
-//	// 邮箱格式验证
-//	filter := mgo.Filter().Regex("email", "^[a-z]+@[a-z]+\\.[a-z]+$", "i")
-func (f *FilterBuilder) Regex(field string, pattern string, options ...string) *FilterBuilder {
-	regexDoc := makeD("$regex", pattern)
-	if len(options) > 0 && options[0] != "" {
-		regexDoc = append(regexDoc, bson.E{Key: "$options", Value: options[0]})
-	}
-	f.conditions = append(f.conditions, bson.E{Key: field, Value: regexDoc})
-	return f
-}
-
-// StartsWith 以...开头（不区分大小写）
-//
-// 示例：
-//
-//	// 名字以 "张" 开头
-//	filter := mgo.Filter().StartsWith("name", "张")
-func (f *FilterBuilder) StartsWith(field string, prefix string) *FilterBuilder {
-	return f.Regex(field, "^"+regexp.QuoteMeta(prefix), "i")
-}
-
-// EndsWith 以...结尾（不区分大小写）
-//
-// 示例：
-//
-//	// 文件名以 ".pdf" 结尾
-//	filter := mgo.Filter().EndsWith("filename", ".pdf")
-func (f *FilterBuilder) EndsWith(field string, suffix string) *FilterBuilder {
-	return f.Regex(field, regexp.QuoteMeta(suffix)+"$", "i")
-}
-
-// Contains 包含子字符串（不区分大小写）
-//
-// 示例：
-//
-//	// 描述中包含 "优惠"
-//	filter := mgo.Filter().Contains("description", "优惠")
-func (f *FilterBuilder) Contains(field string, substring string) *FilterBuilder {
-	return f.Regex(field, regexp.QuoteMeta(substring), "i")
-}
-
-// Text 全文搜索 ($text)
-//
-// MongoDB: {$text: {$search: search, $language: language}}
-//
-// 示例：
-//
-//	// 搜索包含 "机器学习" 的文档（中文）
-//	filter := mgo.Filter().Text("机器学习", "zh")
-//	// 英文搜索
-//	filter := mgo.Filter().Text("machine learning", "en")
-func (f *FilterBuilder) Text(search string, language ...string) *FilterBuilder {
-	textDoc := makeD("$search", search)
-	if len(language) > 0 && language[0] != "" {
-		textDoc = append(textDoc, bson.E{Key: "$language", Value: language[0]})
-	}
-	f.conditions = append(f.conditions, bson.E{Key: "$text", Value: textDoc})
-	return f
-}
-
-// ===== 类型判断 =====
-
-// Type 类型匹配 ($type)
-//
-// MongoDB: {field: {$type: bsonType}}
-//
-// 示例：
-//
-//	// 字段类型是字符串
-//	filter := mgo.Filter().Type("name", "string")
-//	// 字段类型是数字
-//	filter := mgo.Filter().Type("age", "number")
-func (f *FilterBuilder) Type(field string, bsonType string) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$type", bsonType),
-	})
-	return f
-}
-
-// ===== 数值运算 =====
-
-// Mod 取模运算 ($mod)
-//
-// MongoDB: {field: {$mod: [divisor, remainder]}}
-//
-// 示例：
-//
-//	// 偶数
-//	filter := mgo.Filter().Mod("value", 2, 0)
-//	// 奇数
-//	filter := mgo.Filter().Mod("value", 2, 1)
-func (f *FilterBuilder) Mod(field string, divisor, remainder int64) *FilterBuilder {
-	f.conditions = append(f.conditions, bson.E{
-		Key:   field,
-		Value: makeD("$mod", []int64{divisor, remainder}),
-	})
-	return f
+//	filter := mgo.BitsAnyClear("permissions", 5)
+//	// 生成: {"permissions": {"$bitsAnyClear": 5}}
+func BitsAnyClear(field string, bitmask int) M {
+	return M{field: M{"$bitsAnyClear": bitmask}}
 }

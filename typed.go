@@ -6,258 +6,217 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-// ==================== 泛型集合封装 ====================
+// ==================== TypedCollection 泛型集合 ====================
 
 // TypedCollection 泛型集合封装
 //
-// 提供类型安全的查询和聚合操作
-// T 是文档对应的结构体类型
+// 提供类型安全的集合操作
+//
+// 示例：
+//
+//	users := mgo.Model[User](db)
+//	user, err := users.FindByID(id)  // 返回 *User
+//	results, err := users.Find().All()  // 返回 []*User
 type TypedCollection[T any] struct {
-	*Collection
+	coll *mongo.Collection
+	db   *Database
+	opts *CollectionOptions
 }
 
-// Model 将普通 Collection 转换为泛型 TypedCollection
-//
-// 示例：
-//
-//	userColl := mgo.Model[User](coll)
-//	user, err := userColl.Query(ctx).Eq("name", "张三").First()
-func Model[T any](c *Collection) *TypedCollection[T] {
+// newTypedCollection 创建新的泛型集合实例
+func newTypedCollection[T any](db *Database, coll *mongo.Collection) *TypedCollection[T] {
 	return &TypedCollection[T]{
-		Collection: c,
+		coll: coll,
+		db:   db,
+		opts: &CollectionOptions{
+			Context: db.Context(),
+		},
 	}
 }
 
-// Query 创建泛型查询构建器
-func (tc *TypedCollection[T]) Query(ctx context.Context) *TypedQueryBuilder[T] {
-	return &TypedQueryBuilder[T]{
-		QueryBuilder: tc.Collection.Query(ctx),
+// ==================== 配置方法 ====================
+
+// WithTimestamps 启用自动时间戳
+func (c *TypedCollection[T]) WithTimestamps(fields ...string) *TypedCollection[T] {
+	createdField := "created_at"
+	updatedField := "updated_at"
+
+	if len(fields) > 0 {
+		createdField = fields[0]
 	}
+	if len(fields) > 1 {
+		updatedField = fields[1]
+	}
+
+	c.opts.Timestamps = &TimestampConfig{
+		CreatedField: createdField,
+		UpdatedField: updatedField,
+		Enabled:      true,
+	}
+	return c
 }
 
-// ==================== 泛型查询构建器 ====================
+// WithSoftDelete 启用软删除
+func (c *TypedCollection[T]) WithSoftDelete(fields ...string) *TypedCollection[T] {
+	deletedField := "deleted_at"
 
-// TypedQueryBuilder 泛型查询构建器
-//
-// 继承自 QueryBuilder，重写了返回结果的方法以支持泛型
-type TypedQueryBuilder[T any] struct {
-	*QueryBuilder
+	if len(fields) > 0 {
+		deletedField = fields[0]
+	}
+
+	c.opts.SoftDelete = &SoftDeleteConfig{
+		Field:   deletedField,
+		Enabled: true,
+	}
+	return c
 }
 
-// Filter 设置过滤条件
-func (tqb *TypedQueryBuilder[T]) Filter(filter *FilterBuilder) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Filter(filter)
-	return tqb
+// WithContext 设置默认上下文
+func (c *TypedCollection[T]) WithContext(ctx context.Context) *TypedCollection[T] {
+	c.opts.Context = ctx
+	return c
 }
 
-// Eq 等于条件
-func (tqb *TypedQueryBuilder[T]) Eq(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Eq(field, value)
-	return tqb
+// ==================== 基本信息方法 ====================
+
+// Name 获取集合名称
+func (c *TypedCollection[T]) Name() string {
+	return c.coll.Name()
 }
 
-// Ne 不等于条件
-func (tqb *TypedQueryBuilder[T]) Ne(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Ne(field, value)
-	return tqb
+// Database 获取所属数据库
+func (c *TypedCollection[T]) Database() *Database {
+	return c.db
 }
 
-// Gt 大于条件
-func (tqb *TypedQueryBuilder[T]) Gt(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Gt(field, value)
-	return tqb
+// Native 返回原生 mongo.Collection
+func (c *TypedCollection[T]) Native() *mongo.Collection {
+	return c.coll
 }
 
-// Gte 大于等于条件
-func (tqb *TypedQueryBuilder[T]) Gte(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Gte(field, value)
-	return tqb
+// Context 获取默认上下文
+func (c *TypedCollection[T]) Context() context.Context {
+	return getContext(c.opts.Context)
 }
 
-// Lt 小于条件
-func (tqb *TypedQueryBuilder[T]) Lt(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Lt(field, value)
-	return tqb
+// Options 获取集合选项
+func (c *TypedCollection[T]) Options() *CollectionOptions {
+	return c.opts
 }
 
-// Lte 小于等于条件
-func (tqb *TypedQueryBuilder[T]) Lte(field string, value any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Lte(field, value)
-	return tqb
+// ==================== 查询方法 ====================
+
+// Find 创建查询构建器
+func (c *TypedCollection[T]) Find() *Query[T] {
+	return newQuery[T](c)
 }
 
-// In IN 条件
-func (tqb *TypedQueryBuilder[T]) In(field string, values ...any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.In(field, values...)
-	return tqb
+// FindByID 根据 ID 查询文档
+func (c *TypedCollection[T]) FindByID(id interface{}) (*T, error) {
+	return c.Find().ID(id).One()
 }
 
-// Nin NOT IN 条件
-func (tqb *TypedQueryBuilder[T]) Nin(field string, values ...any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Nin(field, values...)
-	return tqb
+// FindOne 查询单条文档
+func (c *TypedCollection[T]) FindOne(filter M) (*T, error) {
+	return c.Find().Filter(filter).One()
 }
 
-// Between 范围条件
-func (tqb *TypedQueryBuilder[T]) Between(field string, min, max any) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Between(field, min, max)
-	return tqb
+// FindAll 查询所有文档
+func (c *TypedCollection[T]) FindAll(filter M) ([]*T, error) {
+	return c.Find().Filter(filter).All()
 }
 
-// Contains 包含字符串
-func (tqb *TypedQueryBuilder[T]) Contains(field string, substr string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Contains(field, substr)
-	return tqb
+// ==================== 插入方法 ====================
+
+// Insert 插入单条文档
+func (c *TypedCollection[T]) Insert(doc *T) (ObjectID, error) {
+	ctx := c.Context()
+
+	// 应用时间戳
+	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
+		applyTimestamps(doc, c.opts.Timestamps, true)
+	}
+
+	result, err := c.coll.InsertOne(ctx, doc)
+	if err != nil {
+		return NilObjectID, WrapError(err, "failed to insert")
+	}
+
+	// 回填 ID 到原始文档
+	if oid, ok := result.InsertedID.(ObjectID); ok {
+		if err := SetFieldValue(doc, "_id", oid); err == nil {
+			return oid, nil
+		}
+		return oid, nil
+	}
+
+	return NilObjectID, nil
 }
 
-// StartsWith 以字符串开头
-func (tqb *TypedQueryBuilder[T]) StartsWith(field string, prefix string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.StartsWith(field, prefix)
-	return tqb
+// InsertMany 插入多条文档
+func (c *TypedCollection[T]) InsertMany(docs ...*T) ([]ObjectID, error) {
+	if len(docs) == 0 {
+		return nil, nil
+	}
+
+	ctx := c.Context()
+
+	// 应用时间戳
+	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
+		for _, doc := range docs {
+			applyTimestamps(doc, c.opts.Timestamps, true)
+		}
+	}
+
+	// 转换为 []interface{}
+	items := make([]interface{}, len(docs))
+	for i, doc := range docs {
+		items[i] = doc
+	}
+
+	result, err := c.coll.InsertMany(ctx, items)
+	if err != nil {
+		return nil, WrapError(err, "failed to insert many")
+	}
+
+	ids := make([]ObjectID, 0, len(result.InsertedIDs))
+	for i, id := range result.InsertedIDs {
+		if oid, ok := id.(ObjectID); ok {
+			ids = append(ids, oid)
+			// 回填 ID 到原始文档
+			if i < len(docs) {
+				SetFieldValue(docs[i], "_id", oid)
+			}
+		}
+	}
+
+	return ids, nil
 }
 
-// EndsWith 以字符串结尾
-func (tqb *TypedQueryBuilder[T]) EndsWith(field string, suffix string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.EndsWith(field, suffix)
-	return tqb
+// ==================== 聚合方法 ====================
+
+// Count 统计文档数量
+func (c *TypedCollection[T]) Count(filter M) (int64, error) {
+	return c.Find().Filter(filter).Count()
 }
 
-// Regex 正则匹配
-func (tqb *TypedQueryBuilder[T]) Regex(field string, pattern string, options ...string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Regex(field, pattern, options...)
-	return tqb
+// CountAll 统计所有文档数量
+func (c *TypedCollection[T]) CountAll() (int64, error) {
+	return c.Find().Count()
 }
 
-// And AND 逻辑
-func (tqb *TypedQueryBuilder[T]) And(filters ...*FilterBuilder) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.And(filters...)
-	return tqb
+// Exists 检查文档是否存在
+func (c *TypedCollection[T]) Exists(filter M) (bool, error) {
+	return c.Find().Filter(filter).Exists()
 }
 
-// Or OR 逻辑
-func (tqb *TypedQueryBuilder[T]) Or(filters ...*FilterBuilder) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Or(filters...)
-	return tqb
-}
+// ==================== 其他方法 ====================
 
-// Select 选择字段
-func (tqb *TypedQueryBuilder[T]) Select(fields ...string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Select(fields...)
-	return tqb
-}
-
-// Omit 排除字段
-func (tqb *TypedQueryBuilder[T]) Omit(fields ...string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Omit(fields...)
-	return tqb
-}
-
-// OrderBy 设置排序
-func (tqb *TypedQueryBuilder[T]) OrderBy(sort *Sort) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.OrderBy(sort)
-	return tqb
-}
-
-// Sort 简单排序
-func (tqb *TypedQueryBuilder[T]) Sort(field string, direction int) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Sort(field, direction)
-	return tqb
-}
-
-// Asc 升序
-func (tqb *TypedQueryBuilder[T]) Asc(fields ...string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Asc(fields...)
-	return tqb
-}
-
-// Desc 降序
-func (tqb *TypedQueryBuilder[T]) Desc(fields ...string) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Desc(fields...)
-	return tqb
-}
-
-// Limit 限制数量
-func (tqb *TypedQueryBuilder[T]) Limit(limit int64) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Limit(limit)
-	return tqb
-}
-
-// Skip 跳过数量
-func (tqb *TypedQueryBuilder[T]) Skip(skip int64) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Skip(skip)
-	return tqb
-}
-
-// Page 分页
-func (tqb *TypedQueryBuilder[T]) Page(page, pageSize int64) *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.Page(page, pageSize)
-	return tqb
-}
-
-// WithDeleted 包含已删除
-func (tqb *TypedQueryBuilder[T]) WithDeleted() *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.WithDeleted()
-	return tqb
-}
-
-// OnlyDeleted 仅包含已删除
-func (tqb *TypedQueryBuilder[T]) OnlyDeleted() *TypedQueryBuilder[T] {
-	tqb.QueryBuilder.OnlyDeleted()
-	return tqb
-}
-
-// ==================== 结果获取方法 (泛型增强) ====================
-
-// One 查询单条记录并返回对象
-//
-// 示例：
-//
-//	user, err := coll.Query(ctx).Eq("_id", id).One()
-func (tqb *TypedQueryBuilder[T]) One() (T, error) {
-	var result T
-	err := tqb.QueryBuilder.One(&result)
-	return result, err
-}
-
-// All 查询多条记录并返回切片
-//
-// 示例：
-//
-//	users, err := coll.Query(ctx).Eq("status", "active").All()
-func (tqb *TypedQueryBuilder[T]) All() ([]T, error) {
-	var results []T
-	err := tqb.QueryBuilder.All(&results)
-	return results, err
-}
-
-// FindAndUpdate 查找并更新，返回更新后的对象
-func (tqb *TypedQueryBuilder[T]) FindAndUpdate(update any) (T, error) {
-	// UpdateBuilder 转换逻辑在 QueryBuilder.FindAndUpdate 中处理
-	// 这里我们需要先调用 QueryBuilder 的通用方法，这里稍微麻烦，因为 update 参数类型可能是 *UpdateBuilder 或 map
-	// 由于我们下面会优化 QueryBuilder.FindAndUpdate 接受 any，这里直接传即可
-
-	var result T
-	// 注意：此时 QueryBuilder.FindAndUpdate 签名还没改，可能会报错。
-	// 我们假设接下来会修改 QueryBuilder 的签名接受 any
-	err := tqb.QueryBuilder.FindAndUpdate(update, &result)
-	return result, err
-}
-
-// FindAndReplace 查找并替换，返回替换后的对象
-func (tqb *TypedQueryBuilder[T]) FindAndReplace(replacement any) (T, error) {
-	var result T
-	err := tqb.QueryBuilder.FindAndReplace(replacement, &result)
-	return result, err
-}
-
-// FindAndDelete 查找并删除，返回被删除的对象
-func (tqb *TypedQueryBuilder[T]) FindAndDelete() (T, error) {
-	var result T
-	err := tqb.QueryBuilder.FindAndDelete(&result)
-	return result, err
-}
-
-// Cursor 获取游标
-func (tqb *TypedQueryBuilder[T]) Cursor() (*mongo.Cursor, error) {
-	return tqb.QueryBuilder.Cursor()
+// Drop 删除集合
+func (c *TypedCollection[T]) Drop() error {
+	ctx := c.Context()
+	if err := c.coll.Drop(ctx); err != nil {
+		return WrapError(err, "failed to drop collection")
+	}
+	return nil
 }

@@ -1,109 +1,68 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/gocrud/mgo"
-	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // User 用户模型
 type User struct {
-	ID        bson.ObjectID `bson:"_id,omitempty"`
-	Name      string        `bson:"name"`
-	Email     string        `bson:"email"`
-	Age       int           `bson:"age"`
-	City      string        `bson:"city"`
-	CreatedAt time.Time     `bson:"created_at"`
+	ID        mgo.ObjectID `bson:"_id,omitempty"`
+	Name      string       `bson:"name"`
+	Email     string       `bson:"email"`
+	CreatedAt time.Time    `bson:"created_at"`
+	UpdatedAt time.Time    `bson:"updated_at"`
 }
 
 func main() {
-	// 连接 MongoDB
-	uri := "mongodb://example:example@localhost:27017/?directConnection=true"
-	ctx := context.Background()
-
-	client, err := mgo.Connect(ctx, uri)
-	if err != nil {
-		log.Fatal("连接失败:", err)
-	}
-	defer client.Disconnect(ctx)
-
-	fmt.Println("✅ 连接成功\n")
+	// 连接数据库
+	db := mgo.MustOpen("mongodb://localhost/quickstart")
+	defer db.Close()
 
 	// 获取集合
-	coll := client.Database("quickstart_db").Collection("users")
+	users := mgo.Model[User](db).WithTimestamps()
 
-	// 清空集合
-	coll.Drop(ctx)
-
-	// ==================== 1. 插入 ====================
-	fmt.Println("📝 1. 插入数据")
-	user := User{
-		Name:      "张三",
-		Email:     "zhangsan@example.com",
-		Age:       25,
-		City:      "北京",
-		CreatedAt: time.Now(),
+	// 插入
+	user := &User{
+		Name:  "张三",
+		Email: "zhangsan@example.com",
 	}
-	result, _ := coll.InsertOne(ctx, user)
-	fmt.Printf("   插入成功，ID: %v\n\n", result.InsertedID)
-
-	// ==================== 2. 查询 ====================
-	fmt.Println("📖 2. 查询数据")
-
-	// 查询单条 (更多泛型用法请参考 examples/generic/main.go)
-	var foundUser User
-	err = coll.Query(ctx).Eq("name", "张三").One(&foundUser)
+	id, err := users.Insert(user)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("   查到: %s, 邮箱: %s\n", foundUser.Name, foundUser.Email)
+	fmt.Printf("插入成功，ID: %s\n", id.Hex())
 
-	// 计数
-	count, _ := coll.Query(ctx).Eq("city", "北京").Count()
-	fmt.Printf("   北京用户数: %d\n\n", count)
-
-	// ==================== 3. 更新 ====================
-	fmt.Println("✏️  3. 更新数据")
-	// 使用 mgo.Set 快捷更新 (也支持 mgo.Update().Set(...))
-	updateResult, _ := coll.Query(ctx).
-		Eq("name", "张三").
-		UpdateOne(mgo.Set("age", 26))
-	fmt.Printf("   更新了 %d 条记录\n\n", updateResult.ModifiedCount)
-
-	// ==================== 4. 聚合 ====================
-	fmt.Println("📊 4. 聚合查询")
-
-	// 先插入更多数据
-	coll.InsertMany(ctx, []any{
-		User{Name: "李四", Email: "lisi@example.com", Age: 30, City: "上海", CreatedAt: time.Now()},
-		User{Name: "王五", Email: "wangwu@example.com", Age: 22, City: "北京", CreatedAt: time.Now()},
-	})
-
-	// 按城市分组统计
-	type CityCount struct {
-		City  string `bson:"_id"`
-		Count int    `bson:"count"`
+	// 查询
+	found, err := users.FindByID(id)
+	if err != nil {
+		log.Fatal(err)
 	}
-	var cityCounts []CityCount
-	coll.Aggs(ctx).
-		Stage(mgo.Stage().Group("$city", mgo.M{"count": mgo.Sum(1)})).
-		All(&cityCounts)
+	fmt.Printf("查询成功: %s (%s)\n", found.Name, found.Email)
 
-	for _, cc := range cityCounts {
-		fmt.Printf("   %s: %d 人\n", cc.City, cc.Count)
+	// 更新
+	err = users.Find().ID(id).
+		Set("name", "张三丰").
+		Update()
+	if err != nil {
+		log.Fatal(err)
 	}
-	fmt.Println()
+	fmt.Println("更新成功")
 
-	// ==================== 5. 删除 ====================
-	fmt.Println("🗑️  5. 删除数据")
-	deleteResult, _ := coll.Query(ctx).
-		Eq("name", "王五").
-		DeleteOne()
-	fmt.Printf("   删除了 %d 条记录\n\n", deleteResult.DeletedCount)
+	// 查询列表
+	results, _ := users.Find().
+		OrderBy("created_at").
+		Limit(10).
+		All()
+	fmt.Printf("查询到 %d 个用户\n", len(results))
 
-	fmt.Println("✅ 快速入门示例完成！")
+	// 删除
+	err = users.Find().ID(id).Delete()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("删除成功")
 }
