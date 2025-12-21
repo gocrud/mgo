@@ -15,6 +15,10 @@ type User struct {
 	Balance float64      `bson:"balance"`
 }
 
+func (User) TableName() string {
+	return "users"
+}
+
 // TransferLog 转账日志模型
 type TransferLog struct {
 	ID         mgo.ObjectID `bson:"_id,omitempty"`
@@ -22,6 +26,10 @@ type TransferLog struct {
 	ToUserID   mgo.ObjectID `bson:"to_user_id"`
 	Amount     float64      `bson:"amount"`
 	Status     string       `bson:"status"`
+}
+
+func (TransferLog) TableName() string {
+	return "transfer_logs"
 }
 
 func main() {

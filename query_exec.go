@@ -183,11 +183,15 @@ func (q *Query[T]) First() (*T, error) {
 func (q *Query[T]) Last() (*T, error) {
 	// 反转排序
 	reversed := q.Clone()
-	for k, v := range q.sort {
-		if v, ok := v.(int); ok {
-			reversed.sort[k] = -v
+	newSort := make(D, len(reversed.sort))
+	for i, elem := range reversed.sort {
+		if order, ok := elem.Value.(int); ok {
+			newSort[i] = E{Key: elem.Key, Value: -order}
+		} else {
+			newSort[i] = elem
 		}
 	}
+	reversed.sort = newSort
 	return reversed.Limit(1).One()
 }
 

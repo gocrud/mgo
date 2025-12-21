@@ -116,6 +116,76 @@ results, err := agg.Aggregate[Stats](users).
     All()
 ```
 
+### 游标分页（大数据量场景）
+
+```go
+// 第一页
+page, err := agg.Aggregate[CityStats](users).
+    Match(mgo.M{"status": "active"}).
+    GroupBy("$city").
+        Count("count").
+        Avg("avg_age", "$age").
+    SortDesc("count").
+    CursorPage("", 20) // 空游标表示第一页
+
+// 下一页
+nextPage, err := agg.Aggregate[CityStats](users).
+    Match(mgo.M{"status": "active"}).
+    GroupBy("$city").
+        Count("count").
+        Avg("avg_age", "$age").
+    SortDesc("count").
+    CursorPage(page.NextCursor, 20)
+
+// 上一页（双向翻页）
+prevPage, err := agg.Aggregate[CityStats](users).
+    Match(mgo.M{"status": "active"}).
+    GroupBy("$city").
+        Count("count").
+        Avg("avg_age", "$age").
+    SortDesc("count").
+    CursorPage(page.PrevCursor, 20)
+
+// 遍历所有页
+cursor := ""
+for {
+    page, err := agg.Aggregate[CityStats](users).
+        Match(mgo.M{"status": "active"}).
+        GroupBy("$city").
+            Count("count").
+            Avg("avg_age", "$age").
+        SortDesc("count").
+        CursorPage(cursor, 50)
+    
+    if err != nil {
+        return err
+    }
+    
+    // 处理当前页数据
+    for _, item := range page.Items {
+        fmt.Printf("城市: %s, 用户数: %d\n", item.City, item.Count)
+    }
+    
+    // 没有更多数据，退出
+    if !page.HasMore {
+        break
+    }
+    
+    // 使用下一页游标
+    cursor = page.NextCursor
+}
+```
+
+**游标分页特性**：
+- ✅ 适合大数据量聚合结果的分页
+- ✅ 性能稳定，不受数据量影响
+- ✅ 支持多字段排序
+- ✅ 支持双向翻页（前一页/后一页）
+- ✅ 自动处理游标编解码
+- ✅ 游标解析失败时自动返回第一页
+- ⚠️ 无总页数信息（适合无限滚动场景）
+- ⚠️ 需要保持聚合管道的一致性（每次调用使用相同的 Match、GroupBy、排序条件）
+
 ### 日期分组
 
 ```go
@@ -146,6 +216,10 @@ results, err := agg.Aggregate[DailyStats](users).
 - `AddFields(fields)` - 添加字段
 - `ReplaceRoot(newRoot)` - 替换根文档
 - `Sample(size)` - 随机抽样
+- `CursorPage(cursor, perPage)` - 游标分页（推荐大数据量场景）
+- `All()` - 执行并返回所有结果
+- `One()` - 执行并返回第一条结果
+- `Count()` - 统计聚合结果数量
 
 ### GroupStage 累加器
 
@@ -277,3 +351,18 @@ func main() {
 3. **索引支持**：确保 Match 条件有索引
 4. **限制结果**：使用 Limit 限制结果数量
 5. **避免 $lookup**：Join 操作开销大，能在应用层做就不要在数据库层做
+6. **大数据量分页**：使用 `CursorPage` 代替 `Skip/Limit` 组合
+
+## 分页对比
+
+| 场景 | 推荐方案 | 说明 |
+|------|----------|------|
+| 小数据量（< 1000条） | `Limit` + `Skip` | 简单直接 |
+| 大数据量分页 | `CursorPage` | 性能稳定，不受数据量影响 |
+| 需要总页数 | 先 `Count`，再 `Limit/Skip` | 有性能开销 |
+| 无限滚动 | `CursorPage` | 最佳选择 |
+| 双向翻页 | `CursorPage` | 原生支持前后翻页 |
+
+## 更多示例
+
+完整示例代码请参考：[examples/agg_cursor_pagination/main.go](../examples/agg_cursor_pagination/main.go)

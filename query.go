@@ -23,7 +23,7 @@ import (
 type Query[T any] struct {
 	coll        *TypedCollection[T]
 	filter      M
-	sort        M
+	sort        D
 	skip        *int64
 	limit       *int64
 	projection  M
@@ -38,7 +38,7 @@ func newQuery[T any](coll *TypedCollection[T]) *Query[T] {
 	return &Query[T]{
 		coll:   coll,
 		filter: M{},
-		sort:   M{},
+		sort:   D{},
 		ctx:    coll.Context(),
 	}
 }
@@ -136,7 +136,8 @@ func (q *Query[T]) IDs(ids ...interface{}) *Query[T] {
 //
 //	query.OrderBy("created_at")  // 降序
 func (q *Query[T]) OrderBy(field string) *Query[T] {
-	q.sort[field] = -1
+	q.sort = removeField(q.sort, field)
+	q.sort = append(q.sort, E{Key: field, Value: -1})
 	return q
 }
 
@@ -147,7 +148,8 @@ func (q *Query[T]) OrderBy(field string) *Query[T] {
 //	query.Asc("age")
 func (q *Query[T]) Asc(fields ...string) *Query[T] {
 	for _, field := range fields {
-		q.sort[field] = 1
+		q.sort = removeField(q.sort, field)
+		q.sort = append(q.sort, E{Key: field, Value: 1})
 	}
 	return q
 }
@@ -159,7 +161,8 @@ func (q *Query[T]) Asc(fields ...string) *Query[T] {
 //	query.Desc("created_at", "updated_at")
 func (q *Query[T]) Desc(fields ...string) *Query[T] {
 	for _, field := range fields {
-		q.sort[field] = -1
+		q.sort = removeField(q.sort, field)
+		q.sort = append(q.sort, E{Key: field, Value: -1})
 	}
 	return q
 }
@@ -168,10 +171,11 @@ func (q *Query[T]) Desc(fields ...string) *Query[T] {
 //
 // 示例：
 //
-//	query.Sort(mgo.M{"age": 1, "created_at": -1})
-func (q *Query[T]) Sort(sort M) *Query[T] {
-	for k, v := range sort {
-		q.sort[k] = v
+//	query.Sort(mgo.D{{Key: "age", Value: 1}, {Key: "created_at", Value: -1}})
+func (q *Query[T]) Sort(sort D) *Query[T] {
+	for _, elem := range sort {
+		q.sort = removeField(q.sort, elem.Key)
+		q.sort = append(q.sort, elem)
 	}
 	return q
 }
@@ -366,7 +370,7 @@ func (q *Query[T]) Clone() *Query[T] {
 	cloned := &Query[T]{
 		coll:        q.coll,
 		filter:      CopyMap(q.filter),
-		sort:        CopyMap(q.sort),
+		sort:        append(D{}, q.sort...),
 		ctx:         q.ctx,
 		withTrashed: q.withTrashed,
 		onlyTrashed: q.onlyTrashed,
@@ -391,4 +395,17 @@ func (q *Query[T]) Clone() *Query[T] {
 	}
 
 	return cloned
+}
+
+// ==================== 辅助函数 ====================
+
+// removeField 从有序文档中移除指定字段（用于处理重复字段）
+func removeField(d D, field string) D {
+	result := make(D, 0, len(d))
+	for _, elem := range d {
+		if elem.Key != field {
+			result = append(result, elem)
+		}
+	}
+	return result
 }

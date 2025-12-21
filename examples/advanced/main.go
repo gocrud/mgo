@@ -24,6 +24,10 @@ type User struct {
 	UpdatedAt time.Time    `bson:"updated_at"`
 }
 
+func (User) TableName() string {
+	return "users"
+}
+
 // Order 订单模型
 type Order struct {
 	ID        mgo.ObjectID `bson:"_id,omitempty"`
@@ -31,6 +35,10 @@ type Order struct {
 	Amount    float64      `bson:"amount"`
 	Status    string       `bson:"status"`
 	CreatedAt time.Time    `bson:"created_at"`
+}
+
+func (Order) TableName() string {
+	return "orders"
 }
 
 // CityStats 城市统计

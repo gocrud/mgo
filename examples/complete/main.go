@@ -22,6 +22,10 @@ type User struct {
 	DeletedAt *time.Time   `bson:"deleted_at,omitempty"`
 }
 
+func (User) TableName() string {
+	return "users"
+}
+
 func main() {
 	fmt.Println("🚀 MGO 完整示例")
 	fmt.Println("================")

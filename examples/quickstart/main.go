@@ -17,6 +17,10 @@ type User struct {
 	UpdatedAt time.Time    `bson:"updated_at"`
 }
 
+func (User) TableName() string {
+	return "users"
+}
+
 func main() {
 	// 连接数据库
 	db := mgo.MustOpen("mongodb://localhost/quickstart")

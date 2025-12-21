@@ -40,7 +40,7 @@ func (p *PipelineBuilder) Group(id string, fields mgo.M) *PipelineBuilder {
 }
 
 // Sort 添加 sort 阶段
-func (p *PipelineBuilder) Sort(sort mgo.M) *PipelineBuilder {
+func (p *PipelineBuilder) Sort(sort mgo.D) *PipelineBuilder {
 	p.stages = append(p.stages, mgo.D{{Key: "$sort", Value: sort}})
 	return p
 }
@@ -108,7 +108,7 @@ func GroupStageDoc(id string, fields mgo.M) mgo.D {
 }
 
 // SortStage 创建 sort 阶段
-func SortStage(sort mgo.M) mgo.D {
+func SortStage(sort mgo.D) mgo.D {
 	return mgo.D{{Key: "$sort", Value: sort}}
 }
 

@@ -24,6 +24,10 @@ type TestUser struct {
 	DeletedAt *time.Time   `bson:"deleted_at,omitempty"`
 }
 
+func (TestUser) TableName() string {
+	return "test_users"
+}
+
 func setupTestDB(t *testing.T) *mgo.Database {
 	db, err := mgo.Open(testURI)
 	if err != nil {
@@ -722,6 +726,261 @@ func TestErrorHandling(t *testing.T) {
 		}
 		if len(results) != 0 {
 			t.Errorf("AllOrEmpty 应该返回空切片，得到 %d 条", len(results))
+		}
+	})
+}
+
+func TestCursorPagination(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	users := mgo.Model[TestUser](db, "cursor_page_test")
+	defer users.Truncate()
+
+	// 插入 50 条测试数据
+	testUsers := make([]*TestUser, 50)
+	for i := 0; i < 50; i++ {
+		testUsers[i] = &TestUser{
+			Name:   fmt.Sprintf("User%02d", i),
+			Email:  fmt.Sprintf("user%02d@test.com", i),
+			Age:    20 + i,
+			Status: "active",
+		}
+	}
+	_, _ = users.InsertMany(testUsers...)
+
+	t.Run("FirstPage", func(t *testing.T) {
+		page, err := users.Find().Desc("_id").CursorPage("", 10)
+		if err != nil {
+			t.Fatalf("游标分页失败: %v", err)
+		}
+
+		if len(page.Items) != 10 {
+			t.Errorf("期望 10 条记录，得到 %d 条", len(page.Items))
+		}
+
+		if !page.HasMore {
+			t.Error("应该有更多数据")
+		}
+
+		if page.NextCursor == "" {
+			t.Error("NextCursor 不应为空")
+		}
+
+		if page.PrevCursor != "" {
+			t.Error("第一页的 PrevCursor 应为空")
+		}
+	})
+
+	t.Run("NextPage", func(t *testing.T) {
+		// 获取第一页
+		page1, err := users.Find().Desc("_id").CursorPage("", 10)
+		if err != nil {
+			t.Fatalf("第一页失败: %v", err)
+		}
+
+		// 使用游标获取第二页
+		page2, err := users.Find().Desc("_id").CursorPage(page1.NextCursor, 10)
+		if err != nil {
+			t.Fatalf("第二页失败: %v", err)
+		}
+
+		if len(page2.Items) != 10 {
+			t.Errorf("期望 10 条记录，得到 %d 条", len(page2.Items))
+		}
+
+		// 验证两页数据不重复
+		if page1.Items[0].ID == page2.Items[0].ID {
+			t.Error("第一页和第二页的数据不应重复")
+		}
+
+		if page2.PrevCursor == "" {
+			t.Error("第二页应该有 PrevCursor")
+		}
+	})
+
+	t.Run("PrevPage", func(t *testing.T) {
+		// 先到第二页
+		page1, _ := users.Find().Desc("_id").CursorPage("", 10)
+		page2, _ := users.Find().Desc("_id").CursorPage(page1.NextCursor, 10)
+
+		// 使用 PrevCursor 返回第一页
+		pagePrev, err := users.Find().Desc("_id").CursorPage(page2.PrevCursor, 10)
+		if err != nil {
+			t.Fatalf("返回上一页失败: %v", err)
+		}
+
+		if len(pagePrev.Items) != 10 {
+			t.Errorf("期望 10 条记录，得到 %d 条", len(pagePrev.Items))
+		}
+
+		// 验证返回的是第一页的数据
+		if page1.Items[0].ID != pagePrev.Items[0].ID {
+			t.Error("返回的数据应该与第一页相同")
+		}
+	})
+
+	t.Run("LastPage", func(t *testing.T) {
+		// 遍历到最后一页
+		var cursor string
+		var page *mgo.CursorPage[TestUser]
+		var err error
+
+		for {
+			page, err = users.Find().Desc("_id").CursorPage(cursor, 10)
+			if err != nil {
+				t.Fatalf("分页失败: %v", err)
+			}
+
+			if !page.HasMore {
+				break
+			}
+
+			cursor = page.NextCursor
+		}
+
+		// 最后一页应该没有下一页
+		if page.HasMore {
+			t.Error("最后一页不应该有更多数据")
+		}
+
+		if page.NextCursor != "" {
+			t.Error("最后一页的 NextCursor 应为空")
+		}
+	})
+
+	t.Run("CustomSort", func(t *testing.T) {
+		// 按年龄升序
+		page, err := users.Find().Asc("age").CursorPage("", 10)
+		if err != nil {
+			t.Fatalf("自定义排序失败: %v", err)
+		}
+
+		if len(page.Items) < 2 {
+			t.Fatal("数据不足")
+		}
+
+		// 验证排序正确
+		if page.Items[0].Age > page.Items[1].Age {
+			t.Error("排序不正确，应该按年龄升序")
+		}
+	})
+
+	t.Run("MultiFieldSort", func(t *testing.T) {
+		// 多字段排序（已修复：使用 D 类型保证排序顺序）
+		page, err := users.Find().
+			Desc("status").
+			Asc("age").
+			CursorPage("", 10)
+
+		if err != nil {
+			t.Fatalf("多字段排序失败: %v", err)
+		}
+
+		if len(page.Items) != 10 {
+			t.Errorf("期望 10 条记录，得到 %d 条", len(page.Items))
+		}
+	})
+
+	t.Run("WithFilter", func(t *testing.T) {
+		// 带过滤条件的游标分页
+		page, err := users.Find().
+			Where("age", ">", 30).
+			Desc("age").
+			CursorPage("", 10)
+
+		if err != nil {
+			t.Fatalf("带过滤条件失败: %v", err)
+		}
+
+		// 验证所有结果都符合条件
+		for _, user := range page.Items {
+			if user.Age <= 30 {
+				t.Errorf("User %s 的年龄 %d 不符合条件", user.Name, user.Age)
+			}
+		}
+	})
+
+	t.Run("InvalidCursor", func(t *testing.T) {
+		// 无效游标应该返回第一页（容错处理）
+		page, err := users.Find().Desc("_id").CursorPage("invalid_cursor", 10)
+		if err != nil {
+			t.Fatalf("无效游标处理失败: %v", err)
+		}
+
+		// 应该返回数据，而不是报错
+		if len(page.Items) == 0 {
+			t.Error("无效游标应该返回第一页数据")
+		}
+	})
+
+	t.Run("EmptyResult", func(t *testing.T) {
+		// 查询不存在的数据
+		page, err := users.Find().
+			Where("status", "nonexistent").
+			CursorPage("", 10)
+
+		if err != nil {
+			t.Fatalf("空结果查询失败: %v", err)
+		}
+
+		if len(page.Items) != 0 {
+			t.Error("应该返回空结果")
+		}
+
+		if page.HasMore {
+			t.Error("空结果不应该有更多数据")
+		}
+
+		if page.NextCursor != "" {
+			t.Error("空结果的 NextCursor 应为空")
+		}
+	})
+
+	t.Run("PageSizeLimit", func(t *testing.T) {
+		// 测试每页数量限制
+		page, err := users.Find().CursorPage("", 2000) // 超过最大限制
+		if err != nil {
+			t.Fatalf("分页失败: %v", err)
+		}
+
+		// 应该被限制为最大值（1000）
+		if len(page.Items) > 1000 {
+			t.Errorf("每页数量超过限制，期望最多 1000，得到 %d", len(page.Items))
+		}
+	})
+
+	t.Run("Traversal", func(t *testing.T) {
+		// 完整遍历所有数据
+		var allItems []*TestUser
+		var cursor string
+
+		for {
+			page, err := users.Find().Desc("_id").CursorPage(cursor, 10)
+			if err != nil {
+				t.Fatalf("遍历失败: %v", err)
+			}
+
+			allItems = append(allItems, page.Items...)
+
+			if !page.HasMore {
+				break
+			}
+
+			cursor = page.NextCursor
+		}
+
+		if len(allItems) != 50 {
+			t.Errorf("期望遍历 50 条记录，实际 %d 条", len(allItems))
+		}
+
+		// 验证没有重复
+		idSet := make(map[mgo.ObjectID]bool)
+		for _, item := range allItems {
+			if idSet[item.ID] {
+				t.Errorf("发现重复记录: %s", item.ID.Hex())
+			}
+			idSet[item.ID] = true
 		}
 	})
 }
