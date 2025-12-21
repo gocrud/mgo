@@ -15,7 +15,7 @@ type User struct {
 	Balance float64      `bson:"balance"`
 }
 
-func (User) TableName() string {
+func (User) CollName() string {
 	return "users"
 }
 
@@ -28,7 +28,7 @@ type TransferLog struct {
 	Status     string       `bson:"status"`
 }
 
-func (TransferLog) TableName() string {
+func (TransferLog) CollName() string {
 	return "transfer_logs"
 }
 

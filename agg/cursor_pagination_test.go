@@ -18,7 +18,7 @@ type TestUser struct {
 	CreatedAt time.Time    `bson:"created_at"`
 }
 
-func (TestUser) TableName() string {
+func (TestUser) CollName() string {
 	return "test_users"
 }
 

@@ -24,7 +24,7 @@ type User struct {
 	UpdatedAt time.Time    `bson:"updated_at"`
 }
 
-func (User) TableName() string {
+func (User) CollName() string {
 	return "users"
 }
 
@@ -37,7 +37,7 @@ type Order struct {
 	CreatedAt time.Time    `bson:"created_at"`
 }
 
-func (Order) TableName() string {
+func (Order) CollName() string {
 	return "orders"
 }
 

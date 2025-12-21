@@ -17,7 +17,7 @@ type User struct {
 	UpdatedAt time.Time    `bson:"updated_at"`
 }
 
-func (User) TableName() string {
+func (User) CollName() string {
 	return "users"
 }
 

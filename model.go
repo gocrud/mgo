@@ -17,8 +17,8 @@ package mgo
 //	    return "users"
 //	}
 type Namer interface {
-	// Name 返回集合名称
-	TableName() string
+	// CollName 返回集合名称
+	CollName() string
 }
 
 // Model 创建泛型集合
@@ -52,7 +52,7 @@ func Model[T Namer](source interface{}, collectionName ...string) *TypedCollecti
 	} else {
 		// 从 Namer 接口获取集合名
 		var zero T
-		name = zero.TableName()
+		name = zero.CollName()
 	}
 
 	// 根据 source 类型创建 TypedCollection

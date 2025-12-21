@@ -22,7 +22,7 @@ type User struct {
 	DeletedAt *time.Time   `bson:"deleted_at,omitempty"`
 }
 
-func (User) TableName() string {
+func (User) CollName() string {
 	return "users"
 }
 

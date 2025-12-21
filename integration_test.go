@@ -24,7 +24,7 @@ type TestUser struct {
 	DeletedAt *time.Time   `bson:"deleted_at,omitempty"`
 }
 
-func (TestUser) TableName() string {
+func (TestUser) CollName() string {
 	return "test_users"
 }
 
