@@ -444,3 +444,40 @@ func SetFieldValue(doc interface{}, fieldName string, value interface{}) error {
 
 	return ErrNotFound
 }
+
+// ==================== 类型转换辅助 ====================
+
+// decodeInterfaceSlice 将 []interface{} 转换为目标类型的切片
+//
+// 示例：
+//
+//	var cities []string
+//	err := decodeInterfaceSlice([]interface{}{"北京", "上海"}, &cities)
+func decodeInterfaceSlice(src []interface{}, dst interface{}) error {
+	dstVal := reflect.ValueOf(dst)
+	if dstVal.Kind() != reflect.Ptr {
+		return ErrInvalidOperation
+	}
+
+	dstVal = dstVal.Elem()
+	if dstVal.Kind() != reflect.Slice {
+		return ErrInvalidOperation
+	}
+
+	elemType := dstVal.Type().Elem()
+	slice := reflect.MakeSlice(dstVal.Type(), len(src), len(src))
+
+	for i, v := range src {
+		srcVal := reflect.ValueOf(v)
+		if srcVal.Type().AssignableTo(elemType) {
+			slice.Index(i).Set(srcVal)
+		} else if srcVal.Type().ConvertibleTo(elemType) {
+			slice.Index(i).Set(srcVal.Convert(elemType))
+		} else {
+			return ErrInvalidOperation
+		}
+	}
+
+	dstVal.Set(slice)
+	return nil
+}

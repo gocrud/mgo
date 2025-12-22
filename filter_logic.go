@@ -109,6 +109,61 @@ func Merge(conditions ...M) M {
 	return result
 }
 
+// ==================== 条件逻辑组合函数 ====================
+
+// AndIf 条件逻辑与（仅当 condition 为 true 时才包含该条件）
+//
+// 用于根据业务逻辑动态构建 AND 条件组合
+//
+// 示例：
+//
+//	filter := mgo.And(
+//	    mgo.Eq("status", "active"),
+//	    mgo.AndIf(minAge > 0, mgo.Gt("age", minAge)),
+//	    mgo.AndIf(hasCity, mgo.Eq("city", city)),
+//	)
+func AndIf(condition bool, m M) M {
+	if !condition {
+		return M{}
+	}
+	return m
+}
+
+// OrIf 条件逻辑或（仅当 condition 为 true 时才包含该条件）
+//
+// 用于根据业务逻辑动态构建 OR 条件组合
+//
+// 示例：
+//
+//	filter := mgo.Or(
+//	    mgo.OrIf(searchName, mgo.Like("name", keyword)),
+//	    mgo.OrIf(searchEmail, mgo.Like("email", keyword)),
+//	)
+func OrIf(condition bool, m M) M {
+	if !condition {
+		return M{}
+	}
+	return m
+}
+
+// MergeIf 条件合并（仅当 condition 为 true 时才合并条件）
+//
+// 用于根据业务逻辑动态合并过滤条件
+//
+// 示例：
+//
+//	filter := mgo.Merge(
+//	    mgo.Eq("status", "active"),
+//	    mgo.MergeIf(hasAgeFilter, mgo.Gt("age", minAge)),
+//	    mgo.MergeIf(hasCityFilter, mgo.Eq("city", city)),
+//	)
+func MergeIf(condition bool, m M) M {
+	if !condition {
+		return M{}
+	}
+	return m
+}
+
 // ==================== 高级逻辑组合 ====================
 
 // Filter 构建复杂过滤条件的辅助结构

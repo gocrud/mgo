@@ -13,7 +13,7 @@ import (
 //
 // 示例：
 //
-//	page, err := users.Find().Page(1, 20)
+//	page, err := users.Find().PageList(1, 20)
 //	fmt.Printf("Total: %d, Pages: %d\n", page.Total, page.Pages)
 //	for _, user := range page.Items {
 //	    fmt.Println(user.Name)
@@ -26,7 +26,7 @@ type PageResult[T any] struct {
 	Pages   int   // 总页数
 }
 
-// Page 分页查询
+// PageList 分页查询
 //
 // 参数：
 //   - page: 页码（从 1 开始）
@@ -36,8 +36,8 @@ type PageResult[T any] struct {
 //
 //	page, err := users.Find().
 //	    Where("status", "active").
-//	    Page(1, 20)
-func (q *Query[T]) Page(page, perPage int, opts ...PageOption) (*PageResult[T], error) {
+//	    PageList(1, 20)
+func (q *Query[T]) PageList(page, perPage int, opts ...PageOption) (*PageResult[T], error) {
 	if page < 1 {
 		page = 1
 	}
@@ -89,31 +89,22 @@ func (q *Query[T]) Page(page, perPage int, opts ...PageOption) (*PageResult[T], 
 	}, nil
 }
 
-// Paginate Paginate 是 Page 的别名
-//
-// 示例：
-//
-//	page, err := users.Find().Paginate(1, 20)
-func (q *Query[T]) Paginate(page, perPage int, opts ...PageOption) (*PageResult[T], error) {
-	return q.Page(page, perPage, opts...)
-}
-
 // ==================== 简化分页方法 ====================
 
-// SimplePage 简化的分页（只包含数据和当前页信息）
-type SimplePage[T any] struct {
+// SimplePageList 简化的分页（只包含数据和当前页信息）
+type SimplePageList[T any] struct {
 	Items   []*T // 当前页数据
 	Page    int  // 当前页码
 	PerPage int  // 每页数量
 	HasMore bool // 是否有下一页
 }
 
-// SimplePaginate 简化的分页（不统计总数，性能更好）
+// SimplePageList 简化的分页（不统计总数，性能更好）
 //
 // 示例：
 //
-//	page, err := users.Find().SimplePaginate(1, 20)
-func (q *Query[T]) SimplePaginate(page, perPage int) (*SimplePage[T], error) {
+//	page, err := users.Find().SimplePageList(1, 20)
+func (q *Query[T]) SimplePageList(page, perPage int) (*SimplePageList[T], error) {
 	if page < 1 {
 		page = 1
 	}
@@ -138,7 +129,7 @@ func (q *Query[T]) SimplePaginate(page, perPage int) (*SimplePage[T], error) {
 		items = items[:perPage]
 	}
 
-	return &SimplePage[T]{
+	return &SimplePageList[T]{
 		Items:   items,
 		Page:    page,
 		PerPage: perPage,

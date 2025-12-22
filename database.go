@@ -41,18 +41,6 @@ func (d *Database) Collection(name string, opts ...CollectionOption) *Collection
 	return newCollection(d, d.db.Collection(name), opts...)
 }
 
-// Coll Collection 的简写形式
-//
-// 示例：
-//
-//	users := db.Coll("users")
-//
-//	// 启用软删除
-//	users := db.Coll("users", mgo.WithSoftDelete())
-func (d *Database) Coll(name string, opts ...CollectionOption) *Collection {
-	return d.Collection(name, opts...)
-}
-
 // Name 获取数据库名称
 //
 // 示例：

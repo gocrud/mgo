@@ -93,6 +93,23 @@ func (q *Query[T]) Where(field string, args ...interface{}) *Query[T] {
 	return q
 }
 
+// WhereIf 条件查询（仅当 condition 为 true 时才添加条件）
+//
+// 用于根据业务逻辑动态构建查询条件，避免繁琐的 if-else 分支
+//
+// 示例：
+//
+//	query.WhereIf(keyword != "", "name", keyword)              // 仅当关键词不为空时搜索
+//	query.WhereIf(minAge > 0, "age", ">=", minAge)            // 仅当最小年龄大于0时过滤
+//	query.WhereIf(hasStatus, "status", status)                 // 仅当状态存在时过滤
+//	query.WhereIf(needActive, "is_active", true)               // 仅当需要活跃用户时过滤
+func (q *Query[T]) WhereIf(condition bool, field string, args ...interface{}) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.Where(field, args...)
+}
+
 // Filter 使用复杂过滤条件
 //
 // 示例：
@@ -106,6 +123,23 @@ func (q *Query[T]) Filter(filter M) *Query[T] {
 		q.filter[k] = v
 	}
 	return q
+}
+
+// FilterIf 条件过滤（仅当 condition 为 true 时才应用过滤器）
+//
+// 用于根据业务逻辑动态应用复杂过滤条件
+//
+// 示例：
+//
+//	query.FilterIf(needComplex, mgo.And(
+//	    mgo.Eq("status", "active"),
+//	    mgo.Gt("age", 18),
+//	))
+func (q *Query[T]) FilterIf(condition bool, filter M) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.Filter(filter)
 }
 
 // ID 按 ID 查询

@@ -52,7 +52,9 @@ type User struct {
 }
 ```
 
-### 3. 获取泛型集合
+### 3. 获取集合
+
+#### TypedCollection（泛型方式 - 推荐）
 
 ```go
 // 自动推断集合名为 "users"
@@ -64,6 +66,30 @@ users := mgo.Model[User](db).WithTimestamps()
 // 启用软删除
 users := mgo.Model[User](db).WithSoftDelete()
 ```
+
+#### Collection（传统方式 - 现已支持链式查询）
+
+```go
+// 获取集合
+coll := db.Collection("users")
+
+// 方式1: 传统直接查询（向后兼容）
+var users []User
+err := coll.Find(mgo.M{"status": "active"}, &users)
+
+// 方式2: 新增链式查询（推荐，与 TypedCollection 一致）
+var users []User
+err := coll.Query().
+    Where("status", "active").
+    Where("age", ">", 18).
+    All(&users)
+```
+
+**两种方式的选择：**
+- **TypedCollection**: 类型安全，编译时检查，返回类型明确 → 适合新项目
+- **Collection + Query()**: 灵活性高，支持动态场景 → 适合运行时确定集合名的场景
+
+详见 [Collection 链式查询文档](docs/COLLECTION_QUERY.md)
 
 ### 4. 基础 CRUD
 
@@ -220,7 +246,7 @@ for _, user := range page.Items {
 }
 
 // 简化分页（不统计总数，性能更好）
-page, err := users.Find().SimplePaginate(1, 20)
+page, err := users.Find().SimplePageList(1, 20)
 ```
 
 ### 聚合

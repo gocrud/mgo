@@ -302,7 +302,7 @@ type PageOptions struct {
 //
 // 示例：
 //
-//	page, err := users.Find().Page(1, 20, mgo.DisableCount())
+//	page, err := users.Find().PageList(1, 20, mgo.DisableCount())
 func DisableCount() PageOption {
 	return func(opts *PageOptions) {
 		opts.DisableCount = true

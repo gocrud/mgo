@@ -1,10 +1,219 @@
 # MGO API 完整参考
 
-## 📦 导入
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+- [快速开始](QUICKSTART.md)- [API 完整参考](../API.md)- [Collection 链式查询完整文档](COLLECTION_QUERY.md)详细文档请参阅：## 完整文档```results, err := mgo.Model[User](db).Find().Where("status", "active").All()// 步骤3: 最终迁移到 TypedCollection（可选）err := coll.Query().Where("status", "active").All(&users)// 步骤2: 迁移到链式查询err := coll.Find(mgo.M{"status": "active"}, &users)// 步骤1: 继续使用传统方式（向后兼容）```go现有项目可以渐进式迁移：### 渐进式迁移```err := coll.Query().Where("status", "active").All(&results)var results []Usercoll := db.Collection(collName)collName := getCollectionName() // 动态```go- ✅ 需要 Distinct 查询- ✅ 需要原生游标- ✅ 动态文档结构- ✅ 运行时确定集合名### 选择 Collection.Query()```results, err := users.Find().Where("status", "active").All()users := mgo.Model[User](db)```go- ✅ IDE 代码补全- ✅ 需要类型安全- ✅ 模型固定- ✅ 新项目### 选择 TypedCollection## 使用建议**其他完全一致！** 所有 WhereIf、时间查询、Filter 等方法用法完全相同。  ```  err := coll.Query().All(&results)   // 修改 results  var results []User  ```go- **Collection**: 需要传递结果变量指针  ```  results, err := users.Find().All()  // 返回 []*User  ```go- **TypedCollection**: 直接返回结果**唯一区别：结果返回方式**## 主要差异```err := coll.Query().Filter(filter).All(&results)var results []User// Collectionresults, err := users.Find().Filter(filter).All()// TypedCollection)    mgo.Or(mgo.Gt("age", 25), mgo.Eq("city", "上海")),    mgo.Eq("status", "active"),filter := mgo.And(```go### 复杂过滤器```err := coll.Query().WhereToday("created_at").All(&results)var results []User// Collectionresults, err := users.Find().WhereToday("created_at").All()// TypedCollection```go### 时间查询```    All(&results)    WhereIf(minAge > 0, "age", ">=", minAge).    WhereIf(keyword != "", "name", "like", keyword).err := coll.Query().var results []User// Collection    All()    WhereIf(minAge > 0, "age", ">=", minAge).    WhereIf(keyword != "", "name", "like", keyword).results, err := users.Find().// TypedCollectionminAge := 20keyword := "张三"```go### WhereIf 条件查询```err := coll.Query().Where("status", "active").All(&results)var results []Usercoll := db.Collection("users")// Collectionresults, err := users.Find().Where("status", "active").All()users := mgo.Model[User](db)// TypedCollection```go### 基础查询## 代码示例| Distinct | ❌ | ✅（Collection 独有） || Cursor | ❌ | ✅（Collection 独有） || Count/Exists | ✅ | ✅ || One/All | ✅ | ✅ || Select/Omit | ✅ | ✅ || Limit/Skip | ✅ | ✅ || OrderBy | ✅ | ✅ || 时间查询 | ✅ | ✅ || Filter | ✅ | ✅ || WhereIf | ✅ | ✅ || Where | ✅ | ✅ || 返回值 | `([]*T, error)` | `error`（传指针） || 用法 | `users.Find()` | `coll.Query()` ||------|-----------------|-------------------|| 功能 | TypedCollection | Collection.Query() |## 与 TypedCollection 对比```    All(&users)    Limit(10).    OrderBy("created_at").    Where("age", ">", 18).    Where("status", "active").err := coll.Query().var users []User// 现在：Collection 也支持链式查询了！err := coll.Find(mgo.M{"status": "active"}, &users)var users []User// 以前：传统 Collection 只能这样```go## 现在可以这样用了！## 📦 导入
 
 ```go
 import "github.com/gocrud/mgo"
 ```
+
+## 🎯 Collection 类型选择
+
+MGO 提供两种集合类型，都支持完整的链式查询 API：
+
+### TypedCollection（泛型方式 - 推荐）
+
+```go
+users := mgo.Model[User](db)
+results, err := users.Find().Where("status", "active").All()  // 返回 []*User
+```
+
+**特点：**
+- ✅ 类型安全，编译时检查
+- ✅ 直接返回类型化结果
+- ✅ IDE 代码补全友好
+- ✅ 支持自动时间戳和软删除
+
+### Collection（传统方式 + 链式查询）
+
+```go
+coll := db.Collection("users")
+
+// 传统方式（向后兼容）
+var users []User
+err := coll.Find(mgo.M{"status": "active"}, &users)
+
+// 链式查询（新增，与 TypedCollection 一致）
+var users []User
+err := coll.Find().Where("status", "active").All(&users)  // 需传指针
+```
+
+**特点：**
+- ✅ 灵活性高，适合动态场景
+- ✅ 支持原生游标和 Distinct
+- ✅ 完整的链式查询支持（WhereIf、时间查询等）
+- ✅ 与 TypedCollection API 完全一致
+
+**选择建议：**
+- 新项目、固定模型 → 使用 `TypedCollection`（类型安全）
+- 运行时确定集合名、动态文档 → 使用 `Collection.Find()`（灵活）
+
+详细对比请参阅：[Collection 链式查询文档](docs/COLLECTION_QUERY.md)
+
+---
 
 ## 🔌 连接数据库
 
@@ -227,11 +436,11 @@ user, created, err := query.FirstOrCreate(doc)  // 查询或创建
 
 ```go
 // 标准分页
-page, err := users.Find().Page(1, 20)
+page, err := users.Find().PageList(1, 20)
 fmt.Printf("Total: %d, Pages: %d\n", page.Total, page.Pages)
 
 // 简化分页（不统计总数）
-page, err := users.Find().SimplePaginate(1, 20)
+page, err := users.Find().SimplePageList(1, 20)
 
 // 游标分页
 page, err := users.Find().CursorPaginate("", 20)

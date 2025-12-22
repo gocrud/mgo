@@ -293,3 +293,137 @@ func (dr *DateRange[T]) build() {
 		dr.query.filter[dr.field] = filter
 	}
 }
+
+// ==================== 条件时间查询方法 ====================
+
+// WhereDateBetweenIf 条件时间范围查询（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereDateBetweenIf(hasDateRange, "created_at", startDate, endDate)
+func (q *Query[T]) WhereDateBetweenIf(condition bool, field, start, end string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereDateBetween(field, start, end)
+}
+
+// WhereDateAfterIf 条件大于指定日期（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereDateAfterIf(hasStartDate, "created_at", startDate)
+func (q *Query[T]) WhereDateAfterIf(condition bool, field, date string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereDateAfter(field, date)
+}
+
+// WhereDateBeforeIf 条件小于指定日期（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereDateBeforeIf(hasEndDate, "created_at", endDate)
+func (q *Query[T]) WhereDateBeforeIf(condition bool, field, date string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereDateBefore(field, date)
+}
+
+// WhereTodayIf 条件查询今天（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereTodayIf(onlyToday, "created_at")
+func (q *Query[T]) WhereTodayIf(condition bool, field string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereToday(field)
+}
+
+// WhereYesterdayIf 条件查询昨天（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereYesterdayIf(onlyYesterday, "created_at")
+func (q *Query[T]) WhereYesterdayIf(condition bool, field string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereYesterday(field)
+}
+
+// WhereThisWeekIf 条件查询本周（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereThisWeekIf(onlyThisWeek, "created_at")
+func (q *Query[T]) WhereThisWeekIf(condition bool, field string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereThisWeek(field)
+}
+
+// WhereThisMonthIf 条件查询本月（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereThisMonthIf(onlyThisMonth, "created_at")
+func (q *Query[T]) WhereThisMonthIf(condition bool, field string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereThisMonth(field)
+}
+
+// WhereThisYearIf 条件查询本年（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereThisYearIf(onlyThisYear, "created_at")
+func (q *Query[T]) WhereThisYearIf(condition bool, field string) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereThisYear(field)
+}
+
+// WhereLastDaysIf 条件查询最近 N 天（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereLastDaysIf(needRecentData, "created_at", 7)
+func (q *Query[T]) WhereLastDaysIf(condition bool, field string, days int) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereLastDays(field, days)
+}
+
+// WhereLastHoursIf 条件查询最近 N 小时（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereLastHoursIf(needRecentData, "created_at", 24)
+func (q *Query[T]) WhereLastHoursIf(condition bool, field string, hours int) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereLastHours(field, hours)
+}
+
+// WhereLastMinutesIf 条件查询最近 N 分钟（仅当 condition 为 true 时才添加条件）
+//
+// 示例：
+//
+//	query.WhereLastMinutesIf(needRecentData, "created_at", 30)
+func (q *Query[T]) WhereLastMinutesIf(condition bool, field string, minutes int) *Query[T] {
+	if !condition {
+		return q
+	}
+	return q.WhereLastMinutes(field, minutes)
+}

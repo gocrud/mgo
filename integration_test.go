@@ -225,7 +225,7 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("Pagination", func(t *testing.T) {
-		page, err := users.Find().Page(1, 2)
+		page, err := users.Find().PageList(1, 2)
 		if err != nil {
 			t.Fatalf("分页失败: %v", err)
 		}
@@ -531,7 +531,7 @@ func TestPagination(t *testing.T) {
 	_, _ = users.InsertMany(testUsers...)
 
 	t.Run("StandardPagination", func(t *testing.T) {
-		page, err := users.Find().Page(1, 10)
+		page, err := users.Find().PageList(1, 10)
 		if err != nil {
 			t.Fatalf("分页失败: %v", err)
 		}
@@ -550,7 +550,7 @@ func TestPagination(t *testing.T) {
 	})
 
 	t.Run("SimplePagination", func(t *testing.T) {
-		page, err := users.Find().SimplePaginate(2, 10)
+		page, err := users.Find().SimplePageList(2, 10)
 		if err != nil {
 			t.Fatalf("简化分页失败: %v", err)
 		}

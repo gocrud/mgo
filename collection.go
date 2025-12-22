@@ -79,13 +79,28 @@ func (c *Collection) Options() *CollectionOptions {
 
 // ==================== 基础查询方法 ====================
 
+// Find 创建查询构建器（链式查询）
+//
+// 示例：
+//
+//	var users []User
+//	err := coll.Find().
+//	    Where("status", "active").
+//	    Where("age", ">", 18).
+//	    OrderBy("created_at").
+//	    Limit(10).
+//	    All(&users)
+func (c *Collection) Find() *UntypedQuery {
+	return newUntypedQuery(c)
+}
+
 // FindOne 查询单条文档
 //
 // 示例：
 //
 //	var user User
 //	err := coll.FindOne(mgo.M{"email": email}, &user)
-func (c *Collection) FindOne(filter interface{}, result interface{}) error {
+func (c *Collection) FindOne(filter M, result interface{}) error {
 	ctx := c.Context()
 	err := c.coll.FindOne(ctx, filter).Decode(result)
 	if err != nil {
@@ -104,41 +119,31 @@ func (c *Collection) FindByID(id interface{}, result interface{}) error {
 	return c.FindOne(M{"_id": id}, result)
 }
 
-// Find 查询多条文档
-//
-// 示例：
-//
-//	var users []User
-//	err := coll.Find(mgo.M{"status": "active"}, &users)
-func (c *Collection) Find(filter interface{}, results interface{}) error {
-	ctx := c.Context()
-	cursor, err := c.coll.Find(ctx, filter)
-	if err != nil {
-		return WrapError(err, "failed to find")
-	}
-	defer cursor.Close(ctx)
-
-	if err := cursor.All(ctx, results); err != nil {
-		return WrapError(err, "failed to decode results")
-	}
-	return nil
-}
-
 // ==================== 插入方法 ====================
 
-// InsertOne 插入单条文档
+// Insert 插入单条文档
 //
 // 示例：
 //
-//	id, err := coll.InsertOne(&user)
-func (c *Collection) InsertOne(doc interface{}) (ObjectID, error) {
+//	id, err := coll.Insert(&user)
+func (c *Collection) Insert(doc interface{}) (ObjectID, error) {
 	ctx := c.Context()
-	result, err := c.coll.InsertOne(ctx, doc)
-	if err != nil {
-		return NilObjectID, WrapError(err, "failed to insert one")
+
+	// 应用时间戳
+	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
+		applyTimestamps(doc, c.opts.Timestamps, true)
 	}
 
+	result, err := c.coll.InsertOne(ctx, doc)
+	if err != nil {
+		return NilObjectID, WrapError(err, "failed to insert")
+	}
+
+	// 回填 ID 到原始文档
 	if oid, ok := result.InsertedID.(ObjectID); ok {
+		if err := SetFieldValue(doc, "_id", oid); err == nil {
+			return oid, nil
+		}
 		return oid, nil
 	}
 
@@ -149,18 +154,40 @@ func (c *Collection) InsertOne(doc interface{}) (ObjectID, error) {
 //
 // 示例：
 //
-//	ids, err := coll.InsertMany([]interface{}{user1, user2, user3})
-func (c *Collection) InsertMany(docs []interface{}) ([]ObjectID, error) {
+//	ids, err := coll.InsertMany(&user1, &user2, &user3)
+func (c *Collection) InsertMany(docs ...interface{}) ([]ObjectID, error) {
+	if len(docs) == 0 {
+		return nil, nil
+	}
+
 	ctx := c.Context()
-	result, err := c.coll.InsertMany(ctx, docs)
+
+	// 应用时间戳
+	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
+		for _, doc := range docs {
+			applyTimestamps(doc, c.opts.Timestamps, true)
+		}
+	}
+
+	// 转换为 []interface{}
+	items := make([]interface{}, len(docs))
+	for i, doc := range docs {
+		items[i] = doc
+	}
+
+	result, err := c.coll.InsertMany(ctx, items)
 	if err != nil {
 		return nil, WrapError(err, "failed to insert many")
 	}
 
 	ids := make([]ObjectID, 0, len(result.InsertedIDs))
-	for _, id := range result.InsertedIDs {
+	for i, id := range result.InsertedIDs {
 		if oid, ok := id.(ObjectID); ok {
 			ids = append(ids, oid)
+			// 回填 ID 到原始文档
+			if i < len(docs) {
+				SetFieldValue(docs[i], "_id", oid)
+			}
 		}
 	}
 

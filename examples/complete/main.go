@@ -123,7 +123,7 @@ func main() {
 	fmt.Println("\n📄 分页查询...")
 	page, _ := users.Find().
 		Where("status", "active").
-		Page(1, 2)
+		PageList(1, 2)
 	fmt.Printf("✅ 第 1 页，共 %d 页，总计 %d 条记录\n", page.Pages, page.Total)
 	for _, u := range page.Items {
 		fmt.Printf("   - %s (Age: %d)\n", u.Name, u.Age)
