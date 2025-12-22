@@ -169,13 +169,7 @@ func (c *Collection) InsertMany(docs ...interface{}) ([]ObjectID, error) {
 		}
 	}
 
-	// 转换为 []interface{}
-	items := make([]interface{}, len(docs))
-	for i, doc := range docs {
-		items[i] = doc
-	}
-
-	result, err := c.coll.InsertMany(ctx, items)
+	result, err := c.coll.InsertMany(ctx, docs)
 	if err != nil {
 		return nil, WrapError(err, "failed to insert many")
 	}

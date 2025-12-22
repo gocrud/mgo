@@ -24,11 +24,11 @@ func getContext(ctx context.Context) context.Context {
 //
 // 示例：
 //
-//	ctx := mgo.WithTimeout(5 * time.Second)
+//	ctx, cancel := mgo.WithTimeout(5 * time.Second)
+//	defer cancel()
 //	users.Find().Ctx(ctx).All()
-func WithTimeout(timeout time.Duration) context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
-	return ctx
+func WithTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 // WithDeadline 创建带截止时间的上下文
@@ -36,11 +36,11 @@ func WithTimeout(timeout time.Duration) context.Context {
 // 示例：
 //
 //	deadline := time.Now().Add(5 * time.Second)
-//	ctx := mgo.WithDeadline(deadline)
+//	ctx, cancel := mgo.WithDeadline(deadline)
+//	defer cancel()
 //	users.Find().Ctx(ctx).All()
-func WithDeadline(deadline time.Time) context.Context {
-	ctx, _ := context.WithDeadline(context.Background(), deadline)
-	return ctx
+func WithDeadline(deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.Background(), deadline)
 }
 
 // WithCancel 创建可取消的上下文
