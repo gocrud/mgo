@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -51,12 +52,14 @@ type CityStats struct {
 }
 
 func main() {
+	ctx := context.Background()
+
 	fmt.Println("🚀 MGO 高级功能示例")
 	fmt.Println("======================")
 
 	// 连接数据库
 	db := mgo.MustOpen("mongodb://localhost/mgo_advanced")
-	defer db.Close()
+	defer db.Close(ctx)
 	fmt.Println("✅ 已连接到数据库")
 
 	// 获取集合
@@ -112,12 +115,15 @@ func main() {
 
 	// Each 遍历
 	processedCount := 0
-	err = batch.Each(users.Find().Where("status", "active"),
+	err = batch.Each(users.Find().Eq("status", "active"),
 		func(user *User) error {
 			processedCount++
 			// 模拟处理
 			return nil
 		})
+	if err != nil {
+		log.Printf("Each error: %v", err)
+	}
 	fmt.Printf("✅ Each 遍历处理了 %d 条记录\n", processedCount)
 
 	// Chunk 分块处理
@@ -128,6 +134,9 @@ func main() {
 			fmt.Printf("   处理第 %d 批，包含 %d 条记录\n", chunkCount, len(userList))
 			return nil
 		})
+	if err != nil {
+		log.Printf("Chunk error: %v", err)
+	}
 	fmt.Printf("✅ Chunk 处理完成，共 %d 批\n", chunkCount)
 
 	// Stream Channel
@@ -166,7 +175,7 @@ func main() {
 	fmt.Println("\n💼 事务示例...")
 
 	// 创建测试订单
-	testUser, _ := users.Find().Where("status", "active").First()
+	testUser, _ := users.Find().Eq("status", "active").First()
 	if testUser != nil {
 		// 自动事务
 		err := tx.Transaction(db, func(sess *tx.Session) error {
@@ -175,7 +184,7 @@ func main() {
 
 			// 扣减余额
 			amount := 50.0
-			if err := txUsers.Find().ID(testUser.ID).
+			if err := txUsers.Find().WithContext(sess.Context()).ID(testUser.ID).
 				Inc("balance", -amount).
 				Update(); err != nil {
 				return err // 自动回滚
@@ -187,7 +196,7 @@ func main() {
 				Amount: amount,
 				Status: "completed",
 			}
-			if _, err := txOrders.Insert(order); err != nil {
+			if _, err := txOrders.WithContext(sess.Context()).Insert(order); err != nil {
 				return err // 自动回滚
 			}
 
@@ -201,24 +210,24 @@ func main() {
 		}
 
 		// 带重试的事务
-		err = tx.WithRetry(db, 3, func(sess *tx.Session) error {
-			txUsers := mgo.Model[User](sess)
+		// err = tx.WithRetry(ctx, db, 3, func(sess *tx.Session) error {
+		// 	txUsers := mgo.Model[User](sess)
 
-			return txUsers.Find().ID(testUser.ID).
-				Inc("balance", 10).
-				Update()
-		})
+		// 	return txUsers.Find().ID(testUser.ID).
+		// 		Inc("balance", 10).
+		// 		Update(sess.Context())
+		// })
 
-		if err == nil {
-			fmt.Println("✅ 带重试的事务成功")
-		}
+		// if err == nil {
+		// 	fmt.Println("✅ 带重试的事务成功")
+		// }
 	}
 
 	// ==================== 5. 缓冲区示例 ====================
 	fmt.Println("\n🔄 缓冲区示例...")
 
 	// 创建插入缓冲区
-	insertBuffer := batch.NewBuffer[User](users, 50, 2*time.Second)
+	insertBuffer := batch.NewBuffer[User](ctx, users, 50, 2*time.Second)
 	defer insertBuffer.Close()
 
 	// 添加文档
@@ -239,12 +248,12 @@ func main() {
 	// ==================== 6. 复杂聚合示例 ====================
 	fmt.Println("\n🎯 复杂聚合示例...")
 
-	type UserWithOrders struct {
-		User
-		Orders      []Order `bson:"orders"`
-		OrderCount  int     `bson:"order_count"`
-		TotalAmount float64 `bson:"total_amount"`
-	}
+	// type UserWithOrders struct {
+	// 	User
+	// 	Orders      []Order `bson:"orders"`
+	// 	OrderCount  int     `bson:"order_count"`
+	// 	TotalAmount float64 `bson:"total_amount"`
+	// }
 
 	// 关联查询（模拟，实际需要有订单数据）
 	// usersWithOrders, err := agg.Aggregate[UserWithOrders](users).
@@ -255,7 +264,7 @@ func main() {
 	// 		"total_amount": agg.Sum("$orders.amount"),
 	// 	}).
 	// 	Limit(10).
-	// 	All()
+	// 	All(ctx)
 
 	// ==================== 7. 并行批量操作 ====================
 	fmt.Println("\n⚡ 并行批量操作...")

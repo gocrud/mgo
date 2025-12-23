@@ -90,7 +90,7 @@ func MustTransaction(db *mgo.Database, fn func(*Session) error, opts ...options.
 //	defer sess.Rollback()
 //
 //	users := mgo.Model[User](sess)
-//	if err := users.Find().ID(userID).Update(...); err != nil {
+//	if err := users.Find().ID(userID).Update(); err != nil {
 //	    return err
 //	}
 //
@@ -202,7 +202,7 @@ func (s *Session) Context() context.Context {
 //
 //	db := sess.Database()
 func (s *Session) Database() *mgo.Database {
-	return s.db.WithContext(s.ctx)
+	return s.db
 }
 
 // Collection 获取集合（在事务上下文中）

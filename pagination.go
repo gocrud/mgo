@@ -10,14 +10,6 @@ import (
 // ==================== 分页功能 ====================
 
 // PageResult 分页结果
-//
-// 示例：
-//
-//	page, err := users.Find().PageList(1, 20)
-//	fmt.Printf("Total: %d, Pages: %d\n", page.Total, page.Pages)
-//	for _, user := range page.Items {
-//	    fmt.Println(user.Name)
-//	}
 type PageResult[T any] struct {
 	Items   []*T  // 当前页数据
 	Total   int64 // 总记录数
@@ -27,16 +19,6 @@ type PageResult[T any] struct {
 }
 
 // PageList 分页查询
-//
-// 参数：
-//   - page: 页码（从 1 开始）
-//   - perPage: 每页数量
-//
-// 示例：
-//
-//	page, err := users.Find().
-//	    Where("status", "active").
-//	    PageList(1, 20)
 func (q *Query[T]) PageList(page, perPage int, opts ...PageOption) (*PageResult[T], error) {
 	if page < 1 {
 		page = 1
@@ -100,10 +82,6 @@ type SimplePageList[T any] struct {
 }
 
 // SimplePageList 简化的分页（不统计总数，性能更好）
-//
-// 示例：
-//
-//	page, err := users.Find().SimplePageList(1, 20)
 func (q *Query[T]) SimplePageList(page, perPage int) (*SimplePageList[T], error) {
 	if page < 1 {
 		page = 1
@@ -151,20 +129,6 @@ type CursorData struct {
 type cursorData = CursorData
 
 // CursorPage 游标分页结果
-//
-// 支持双向翻页，提供前后游标
-//
-// 示例：
-//
-//	page, err := users.Find().
-//	    Desc("created_at").
-//	    CursorPage("", 20)
-//
-//	// 下一页
-//	nextPage, _ := users.Find().Desc("created_at").CursorPage(page.NextCursor, 20)
-//
-//	// 上一页
-//	prevPage, _ := users.Find().Desc("created_at").CursorPage(page.PrevCursor, 20)
 type CursorPage[T any] struct {
 	Items      []*T   // 当前页数据
 	NextCursor string // 下一页游标
@@ -173,41 +137,6 @@ type CursorPage[T any] struct {
 }
 
 // CursorPage 使用游标的分页（适用于大数据量，支持双向翻页）
-//
-// 参数：
-//   - cursor: 游标字符串（空字符串表示第一页）
-//   - perPage: 每页数量
-//
-// 特性：
-//   - 自动从查询中提取排序字段
-//   - 无排序时默认按 _id 降序
-//   - 支持多字段排序
-//   - 提供前后游标实现双向翻页
-//   - 游标解析失败时返回第一页
-//
-// 示例：
-//
-//	// 第一页（默认按 _id 降序）
-//	page, err := users.Find().
-//	    Where("status", "active").
-//	    CursorPage("", 20)
-//
-//	// 自定义排序
-//	page, err := users.Find().
-//	    Desc("created_at").
-//	    CursorPage("", 50)
-//
-//	// 多字段排序
-//	page, err := users.Find().
-//	    Asc("age").
-//	    Desc("created_at").
-//	    CursorPage(cursor, 30)
-//
-//	// 下一页
-//	nextPage, _ := users.Find().Desc("created_at").CursorPage(page.NextCursor, 20)
-//
-//	// 上一页
-//	prevPage, _ := users.Find().Desc("created_at").CursorPage(page.PrevCursor, 20)
 func (q *Query[T]) CursorPage(cursor string, perPage int) (*CursorPage[T], error) {
 	if perPage < 1 {
 		perPage = 20
@@ -230,7 +159,6 @@ func (q *Query[T]) CursorPage(cursor string, perPage int) (*CursorPage[T], error
 		data, err := decodeCursor(cursor)
 		if err != nil {
 			// 游标解析失败，忽略并返回第一页（用户友好）
-			// 可以选择记录日志
 		} else {
 			cursorDir = data.Direction
 			// 根据游标方向反转排序（prev时需要反向查询）
@@ -250,7 +178,7 @@ func (q *Query[T]) CursorPage(cursor string, perPage int) (*CursorPage[T], error
 
 			// 构建游标过滤条件
 			filter := query.buildCursorFilter(data)
-			query = query.Filter(filter)
+			query = query.Where(filter)
 		}
 	}
 

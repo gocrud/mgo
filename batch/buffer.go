@@ -17,7 +17,7 @@ import (
 //
 // 示例：
 //
-//	buffer := batch.NewBuffer(users, 100, 5*time.Second)
+//	buffer := batch.NewBuffer(ctx, users, 100, 5*time.Second)
 //	defer buffer.Close()
 //
 //	for _, user := range largeList {
@@ -44,8 +44,8 @@ type Buffer[T any] struct {
 //
 // 示例：
 //
-//	buffer := batch.NewBuffer(users, 100, 5*time.Second)
-func NewBuffer[T any](coll interface{}, size int, flushTime time.Duration) *Buffer[T] {
+//	buffer := batch.NewBuffer(ctx, users, 100, 5*time.Second)
+func NewBuffer[T any](ctx context.Context, coll *mgo.Collection[T], size int, flushTime time.Duration) *Buffer[T] {
 	if size <= 0 {
 		size = 100
 	}
@@ -53,10 +53,8 @@ func NewBuffer[T any](coll interface{}, size int, flushTime time.Duration) *Buff
 		flushTime = 5 * time.Second
 	}
 
-	nativeColl, ctx := extractCollectionAndContext(coll)
-
 	buffer := &Buffer[T]{
-		coll:      nativeColl,
+		coll:      coll.Native(),
 		ctx:       ctx,
 		size:      size,
 		flushTime: flushTime,
@@ -99,7 +97,7 @@ func (b *Buffer[T]) Add(doc *T) error {
 //
 // 示例：
 //
-//	err := buffer.Flush()
+//	buffer.Flush()
 func (b *Buffer[T]) Flush() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -107,20 +105,19 @@ func (b *Buffer[T]) Flush() error {
 	return b.flush()
 }
 
-// flush 内部刷新方法（需要持有锁）
 func (b *Buffer[T]) flush() error {
 	if len(b.buffer) == 0 {
 		return nil
 	}
 
-	// 转换为 []interface{}
-	items := make([]interface{}, len(b.buffer))
+	// 批量插入
+	// 注意：这里需要将 []*T 转换为 []interface{}
+	docs := make([]interface{}, len(b.buffer))
 	for i, doc := range b.buffer {
-		items[i] = doc
+		docs[i] = doc
 	}
 
-	// 插入数据
-	_, err := b.coll.InsertMany(b.ctx, items)
+	_, err := b.coll.InsertMany(b.ctx, docs)
 	if err != nil {
 		b.errors = append(b.errors, err)
 		return err
@@ -137,7 +134,7 @@ func (b *Buffer[T]) flush() error {
 	return nil
 }
 
-// Close 关闭缓冲区（刷新剩余数据）
+// Close 关闭缓冲区（并刷新剩余数据）
 //
 // 示例：
 //
@@ -152,40 +149,28 @@ func (b *Buffer[T]) Close() error {
 
 	b.closed = true
 
-	// 停止定时器
 	if b.timer != nil {
 		b.timer.Stop()
 	}
 
-	// 刷新剩余数据
 	return b.flush()
 }
 
-// Size 获取当前缓冲区大小
-//
-// 示例：
-//
-//	size := buffer.Size()
-func (b *Buffer[T]) Size() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	return len(b.buffer)
-}
-
-// Errors 获取所有错误
-//
-// 示例：
-//
-//	errors := buffer.Errors()
+// Errors 获取发生的错误
 func (b *Buffer[T]) Errors() []error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	return append([]error{}, b.errors...)
+	return b.errors
 }
 
-// ==================== 批量更新缓冲区 ====================
+// Size 获取当前缓冲区大小
+func (b *Buffer[T]) Size() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.buffer)
+}
+
+// ==================== 缓冲区批量更新 ====================
 
 // UpdateBuffer 批量更新缓冲区
 type UpdateBuffer struct {
@@ -204,8 +189,8 @@ type UpdateBuffer struct {
 //
 // 示例：
 //
-//	buffer := batch.NewUpdateBuffer(users, 100, 5*time.Second)
-func NewUpdateBuffer(coll interface{}, size int, flushTime time.Duration) *UpdateBuffer {
+//	buffer := batch.NewUpdateBuffer(ctx, users, 100, 5*time.Second)
+func NewUpdateBuffer[T any](ctx context.Context, coll *mgo.Collection[T], size int, flushTime time.Duration) *UpdateBuffer {
 	if size <= 0 {
 		size = 100
 	}
@@ -213,10 +198,8 @@ func NewUpdateBuffer(coll interface{}, size int, flushTime time.Duration) *Updat
 		flushTime = 5 * time.Second
 	}
 
-	nativeColl, ctx := extractCollectionAndContext(coll)
-
 	buffer := &UpdateBuffer{
-		coll:      nativeColl,
+		coll:      coll.Native(),
 		ctx:       ctx,
 		size:      size,
 		flushTime: flushTime,

@@ -145,12 +145,48 @@ func ParseTime(s string) (time.Time, error) {
 	}
 
 	for _, format := range formats {
-		if t, err := time.Parse(format, s); err == nil {
+		if t, err := time.ParseInLocation(format, s, time.Local); err == nil {
 			return t, nil
 		}
 	}
 
 	return time.Time{}, ErrInvalidOperation
+}
+
+// Time 将各种类型的时间转换为 UTC time.Time
+//
+// 支持的类型：
+//   - time.Time: 直接转换为 UTC
+//   - *time.Time: 解引用后转换为 UTC
+//   - int64: 视为 Unix 时间戳（秒）
+//   - int: 视为 Unix 时间戳（秒）
+//   - string: 尝试按以下格式解析：
+//     1. RFC3339 (2006-01-02T15:04:05Z07:00)
+//     2. DateTime (2006-01-02 15:04:05)
+//     3. Date (2006-01-02)
+//
+// 示例：
+//
+//	mgo.Time("2023-12-25 10:00:00")
+//	mgo.Time(1703498400)
+func Time(v interface{}) time.Time {
+	switch val := v.(type) {
+	case time.Time:
+		return val.UTC()
+	case *time.Time:
+		if val != nil {
+			return val.UTC()
+		}
+	case int64:
+		return time.Unix(val, 0).UTC()
+	case int:
+		return time.Unix(int64(val), 0).UTC()
+	case string:
+		if t, err := ParseTime(val); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 // MustParseTime 解析时间字符串，失败时 panic

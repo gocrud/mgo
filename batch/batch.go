@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"sync"
 
 	"github.com/gocrud/mgo"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -10,21 +11,12 @@ import (
 // ==================== 批量插入 ====================
 
 // InsertBatch 批量插入文档（自动分批）
-//
-// 示例：
-//
-//	largeUserList := make([]*User, 10000)
-//	// ... 填充数据
-//
-//	// 自动分批（默认 1000 条/批）
-//	err := batch.InsertBatch(users, largeUserList)
-//
-//	// 自定义批次大小
-//	err := batch.InsertBatch(users, largeUserList, batch.Size(500))
-func InsertBatch[T any](coll interface{}, docs []*T, opts ...Option) error {
+func InsertBatch[T any](coll *mgo.Collection[T], docs []*T, opts ...Option) error {
 	if len(docs) == 0 {
 		return nil
 	}
+
+	ctx := coll.Context()
 
 	// 解析选项
 	options := &Options{
@@ -35,21 +27,27 @@ func InsertBatch[T any](coll interface{}, docs []*T, opts ...Option) error {
 		opt(options)
 	}
 
-	// 获取原生集合和上下文
-	nativeColl, ctx := extractCollectionAndContext(coll)
+	nativeColl := coll.Native()
+	batchSize := options.Size
+	total := len(docs)
 
-	// 分批处理
-	chunks := mgo.ChunkSlice(docs, options.Size)
+	// 预分配 buffer
+	buffer := make([]interface{}, 0, batchSize)
 
-	for _, chunk := range chunks {
-		// 转换为 []interface{}
-		items := make([]interface{}, len(chunk))
-		for i, doc := range chunk {
-			items[i] = doc
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total {
+			end = total
+		}
+
+		// 重置 buffer
+		buffer = buffer[:0]
+		for _, doc := range docs[i:end] {
+			buffer = append(buffer, doc)
 		}
 
 		// 插入当前批次
-		_, err := nativeColl.InsertMany(ctx, items)
+		_, err := nativeColl.InsertMany(ctx, buffer)
 		if err != nil {
 			return mgo.WrapError(err, "failed to insert batch")
 		}
@@ -59,17 +57,12 @@ func InsertBatch[T any](coll interface{}, docs []*T, opts ...Option) error {
 }
 
 // InsertBatchWithCallback 批量插入并在每批后执行回调
-//
-// 示例：
-//
-//	err := batch.InsertBatchWithCallback(users, largeList, func(inserted int) error {
-//	    fmt.Printf("已插入 %d 条\n", inserted)
-//	    return nil
-//	})
-func InsertBatchWithCallback[T any](coll interface{}, docs []*T, callback func(int) error, opts ...Option) error {
+func InsertBatchWithCallback[T any](coll *mgo.Collection[T], docs []*T, callback func(int) error, opts ...Option) error {
 	if len(docs) == 0 {
 		return nil
 	}
+
+	ctx := coll.Context()
 
 	// 解析选项
 	options := &Options{
@@ -80,29 +73,31 @@ func InsertBatchWithCallback[T any](coll interface{}, docs []*T, callback func(i
 		opt(options)
 	}
 
-	// 获取原生集合和上下文
-	nativeColl, ctx := extractCollectionAndContext(coll)
-
-	// 分批处理
-	chunks := mgo.ChunkSlice(docs, options.Size)
+	nativeColl := coll.Native()
+	batchSize := options.Size
+	total := len(docs)
 	totalInserted := 0
 
-	for _, chunk := range chunks {
-		// 转换为 []interface{}
-		items := make([]interface{}, len(chunk))
-		for i, doc := range chunk {
-			items[i] = doc
+	buffer := make([]interface{}, 0, batchSize)
+
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total {
+			end = total
 		}
 
-		// 插入当前批次
-		_, err := nativeColl.InsertMany(ctx, items)
+		buffer = buffer[:0]
+		for _, doc := range docs[i:end] {
+			buffer = append(buffer, doc)
+		}
+
+		_, err := nativeColl.InsertMany(ctx, buffer)
 		if err != nil {
 			return mgo.WrapError(err, "failed to insert batch")
 		}
 
-		totalInserted += len(chunk)
+		totalInserted += len(buffer)
 
-		// 执行回调
 		if callback != nil {
 			if err := callback(totalInserted); err != nil {
 				return err
@@ -116,25 +111,16 @@ func InsertBatchWithCallback[T any](coll interface{}, docs []*T, callback func(i
 // ==================== 批量更新 ====================
 
 // UpdateBatch 批量更新文档
-//
-// 示例：
-//
-//	updates := []batch.UpdateDoc{
-//	    {Filter: mgo.M{"_id": id1}, Update: mgo.M{"$set": mgo.M{"status": "active"}}},
-//	    {Filter: mgo.M{"_id": id2}, Update: mgo.M{"$set": mgo.M{"status": "inactive"}}},
-//	}
-//	err := batch.UpdateBatch(users, updates)
 type UpdateDoc struct {
 	Filter mgo.M
 	Update mgo.M
 }
 
-func UpdateBatch(coll interface{}, updates []UpdateDoc, opts ...Option) error {
+func UpdateBatch[T any](ctx context.Context, coll *mgo.Collection[T], updates []UpdateDoc, opts ...Option) error {
 	if len(updates) == 0 {
 		return nil
 	}
 
-	// 解析选项
 	options := &Options{
 		Size:    1000,
 		Ordered: true,
@@ -143,22 +129,25 @@ func UpdateBatch(coll interface{}, updates []UpdateDoc, opts ...Option) error {
 		opt(options)
 	}
 
-	// 获取原生集合和上下文
-	nativeColl, ctx := extractCollectionAndContext(coll)
+	nativeColl := coll.Native()
+	batchSize := options.Size
+	total := len(updates)
 
-	// 分批处理
-	chunks := mgo.ChunkSlice(updates, options.Size)
+	models := make([]mongo.WriteModel, 0, batchSize)
 
-	for _, chunk := range chunks {
-		// 构建批量写操作
-		models := make([]mongo.WriteModel, len(chunk))
-		for i, update := range chunk {
-			models[i] = mongo.NewUpdateOneModel().
-				SetFilter(update.Filter).
-				SetUpdate(update.Update)
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total {
+			end = total
 		}
 
-		// 执行批量写
+		models = models[:0]
+		for _, update := range updates[i:end] {
+			models = append(models, mongo.NewUpdateOneModel().
+				SetFilter(update.Filter).
+				SetUpdate(update.Update))
+		}
+
 		_, err := nativeColl.BulkWrite(ctx, models)
 		if err != nil {
 			return mgo.WrapError(err, "failed to update batch")
@@ -171,20 +160,11 @@ func UpdateBatch(coll interface{}, updates []UpdateDoc, opts ...Option) error {
 // ==================== 批量删除 ====================
 
 // DeleteBatch 批量删除文档
-//
-// 示例：
-//
-//	filters := []mgo.M{
-//	    {"_id": id1},
-//	    {"_id": id2},
-//	}
-//	n, err := batch.DeleteBatch(users, filters)
-func DeleteBatch(coll interface{}, filters []mgo.M, opts ...Option) (int64, error) {
+func DeleteBatch[T any](ctx context.Context, coll *mgo.Collection[T], filters []mgo.M, opts ...Option) (int64, error) {
 	if len(filters) == 0 {
 		return 0, nil
 	}
 
-	// 解析选项
 	options := &Options{
 		Size:    1000,
 		Ordered: true,
@@ -193,21 +173,24 @@ func DeleteBatch(coll interface{}, filters []mgo.M, opts ...Option) (int64, erro
 		opt(options)
 	}
 
-	// 获取原生集合和上下文
-	nativeColl, ctx := extractCollectionAndContext(coll)
-
-	// 分批处理
-	chunks := mgo.ChunkSlice(filters, options.Size)
+	nativeColl := coll.Native()
+	batchSize := options.Size
+	total := len(filters)
 	totalDeleted := int64(0)
 
-	for _, chunk := range chunks {
-		// 构建批量写操作
-		models := make([]mongo.WriteModel, len(chunk))
-		for i, filter := range chunk {
-			models[i] = mongo.NewDeleteOneModel().SetFilter(filter)
+	models := make([]mongo.WriteModel, 0, batchSize)
+
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total {
+			end = total
 		}
 
-		// 执行批量写
+		models = models[:0]
+		for _, filter := range filters[i:end] {
+			models = append(models, mongo.NewDeleteOneModel().SetFilter(filter))
+		}
+
 		result, err := nativeColl.BulkWrite(ctx, models)
 		if err != nil {
 			return totalDeleted, mgo.WrapError(err, "failed to delete batch")
@@ -219,28 +202,97 @@ func DeleteBatch(coll interface{}, filters []mgo.M, opts ...Option) (int64, erro
 	return totalDeleted, nil
 }
 
-// ==================== 辅助函数 ====================
-
-// extractCollectionAndContext 提取集合和上下文
-func extractCollectionAndContext(coll interface{}) (*mongo.Collection, context.Context) {
-	var nativeColl *mongo.Collection
-	var ctx context.Context = context.Background()
-
-	// 尝试提取原生集合
-	if nc, ok := coll.(interface{ Native() *mongo.Collection }); ok {
-		nativeColl = nc.Native()
-	} else if nc, ok := coll.(*mongo.Collection); ok {
-		nativeColl = nc
-	} else {
-		panic("batch: invalid collection type")
+// InsertBatchParallel 并行批量插入
+func InsertBatchParallel[T any](coll *mgo.Collection[T], docs []*T, workers int, opts ...Option) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	ctx := coll.Context()
+	if workers <= 0 {
+		workers = 1
 	}
 
-	// 尝试提取上下文
-	if ctxGetter, ok := coll.(interface{ Context() context.Context }); ok {
-		ctx = ctxGetter.Context()
+	options := &Options{
+		Size:    1000,
+		Ordered: true,
+	}
+	for _, opt := range opts {
+		opt(options)
 	}
 
-	return nativeColl, ctx
+	batchSize := options.Size
+	total := len(docs)
+
+	// 计算总批次数
+	numBatches := (total + batchSize - 1) / batchSize
+
+	// 任务通道
+	type batchTask struct {
+		start int
+		end   int
+	}
+	tasks := make(chan batchTask, numBatches)
+
+	// 错误通道
+	errCh := make(chan error, 1)
+
+	// 启动 worker
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer wg.Done()
+			for task := range tasks {
+				// 检查是否有错误发生
+				select {
+				case <-errCh:
+					return
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// 准备批次数据
+				// 注意：这里需要将 []*T 转换为 []interface{}
+				// 为了避免并发问题，每个 worker 创建自己的 buffer
+				batchDocs := make([]interface{}, task.end-task.start)
+				for i, doc := range docs[task.start:task.end] {
+					batchDocs[i] = doc
+				}
+
+				_, err := coll.Native().InsertMany(ctx, batchDocs)
+				if err != nil {
+					select {
+					case errCh <- mgo.WrapError(err, "failed to insert batch parallel"):
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	// 发送任务
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total {
+			end = total
+		}
+		tasks <- batchTask{start: i, end: end}
+	}
+	close(tasks)
+
+	// 等待完成
+	wg.Wait()
+
+	// 检查错误
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 // ==================== 选项 ====================
@@ -255,10 +307,6 @@ type Options struct {
 }
 
 // Size 设置批次大小
-//
-// 示例：
-//
-//	err := batch.InsertBatch(users, docs, batch.Size(500))
 func Size(size int) Option {
 	return func(opts *Options) {
 		opts.Size = size
@@ -266,12 +314,70 @@ func Size(size int) Option {
 }
 
 // Ordered 设置是否有序执行
-//
-// 示例：
-//
-//	err := batch.InsertBatch(users, docs, batch.Ordered(false))
 func Ordered(ordered bool) Option {
 	return func(opts *Options) {
 		opts.Ordered = ordered
 	}
+}
+
+// ==================== 批量操作统计 ====================
+
+// BatchStats 批量操作统计
+type BatchStats struct {
+	Total     int     // 总数
+	Processed int     // 已处理
+	Success   int     // 成功
+	Failed    int     // 失败
+	Errors    []error // 错误列表
+}
+
+// InsertBatchWithStats 批量插入并返回统计信息
+func InsertBatchWithStats[T any](coll *mgo.Collection[T], docs []*T, opts ...Option) (*BatchStats, error) {
+	stats := &BatchStats{
+		Total:  len(docs),
+		Errors: []error{},
+	}
+
+	if len(docs) == 0 {
+		return stats, nil
+	}
+	ctx := coll.Context()
+
+	// 解析选项
+	options := &Options{
+		Size:    1000,
+		Ordered: false, // 默认无序，继续处理错误
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	// 分批处理
+	chunks := mgo.ChunkSlice(docs, options.Size)
+
+	for _, chunk := range chunks {
+		// 转换为 []interface{}
+		items := make([]interface{}, len(chunk))
+		for i, doc := range chunk {
+			items[i] = doc
+		}
+
+		stats.Processed += len(chunk)
+
+		// 插入当前批次
+		_, err := coll.Native().InsertMany(ctx, items)
+		if err != nil {
+			stats.Failed += len(chunk)
+			stats.Errors = append(stats.Errors, err)
+
+			// 如果是有序执行，遇到错误就停止
+			if options.Ordered {
+				return stats, err
+			}
+		} else {
+			stats.Success += len(chunk)
+		}
+	}
+
+	return stats, nil
 }

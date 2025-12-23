@@ -10,91 +10,70 @@ import (
 // ==================== 聚合构建器 ====================
 
 // Builder 聚合构建器
-//
-// 提供流畅的聚合查询 API
-//
-// 示例：
-//
-//	type CityStats struct {
-//	    City   string  `bson:"_id"`
-//	    Count  int     `bson:"count"`
-//	    AvgAge float64 `bson:"avg_age"`
-//	}
-//
-//	results, err := agg.Aggregate[CityStats](users).
-//	    Match(mgo.Eq("status", "active")).
-//	    GroupBy("$city").
-//	        Count("count").
-//	        Avg("avg_age", "$age").
-//	    SortDesc("count").
-//	    Limit(10).
-//	    All()
 type Builder[T any] struct {
 	coll     *mongo.Collection
-	pipeline mgo.Pipeline
 	ctx      context.Context
+	pipeline mgo.Pipeline
 	sort     mgo.D // 排序信息（用于游标分页）
 }
 
 // Aggregate 创建聚合构建器
-//
-// 示例：
-//
-//	builder := agg.Aggregate[Stats](users)
 func Aggregate[T any](source interface{}) *Builder[T] {
 	var coll *mongo.Collection
-	var ctx context.Context
+	var ctx context.Context = context.Background()
 
 	switch src := source.(type) {
 	case interface{ Native() *mongo.Collection }:
 		coll = src.Native()
-		if ctxGetter, ok := source.(interface{ Context() context.Context }); ok {
-			ctx = ctxGetter.Context()
+		// 尝试获取上下文
+		if c, ok := source.(interface{ Context() context.Context }); ok {
+			ctx = c.Context()
 		}
 	case *mongo.Collection:
 		coll = src
-		ctx = context.Background()
 	default:
 		panic("agg: invalid source type")
 	}
 
 	return &Builder[T]{
 		coll:     coll,
-		pipeline: mgo.Pipeline{},
 		ctx:      ctx,
+		pipeline: mgo.Pipeline{},
 	}
+}
+
+// WithContext 设置上下文
+func (b *Builder[T]) WithContext(ctx context.Context) *Builder[T] {
+	b.ctx = ctx
+	return b
+}
+
+// Context 获取上下文
+func (b *Builder[T]) Context() context.Context {
+	if b.ctx == nil {
+		return context.Background()
+	}
+	return b.ctx
 }
 
 // ==================== Pipeline 构建方法 ====================
 
 // Match 添加匹配阶段
-//
-// 示例：
-//
-//	builder.Match(mgo.Eq("status", "active"))
 func (b *Builder[T]) Match(filter mgo.M) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$match", Value: filter}})
 	return b
 }
 
 // GroupBy 添加分组阶段
-//
-// 示例：
-//
-//	builder.GroupBy("$city")
-func (b *Builder[T]) GroupBy(field string) *GroupStage[T] {
+func (b *Builder[T]) GroupBy(field interface{}) *GroupStage[T] {
 	return &GroupStage[T]{
 		builder: b,
 		groupID: field,
-		fields:  mgo.M{},
+		fields:  mgo.D{},
 	}
 }
 
 // Sort 添加排序阶段
-//
-// 示例：
-//
-//	builder.Sort(mgo.D{{Key: "count", Value: -1}, {Key: "name", Value: 1}})
 func (b *Builder[T]) Sort(sort mgo.D) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$sort", Value: sort}})
 	b.sort = sort // 记录排序信息
@@ -102,10 +81,6 @@ func (b *Builder[T]) Sort(sort mgo.D) *Builder[T] {
 }
 
 // SortAsc 升序排序
-//
-// 示例：
-//
-//	builder.SortAsc("age")
 func (b *Builder[T]) SortAsc(fields ...string) *Builder[T] {
 	sort := make(mgo.D, 0, len(fields))
 	for _, field := range fields {
@@ -116,10 +91,6 @@ func (b *Builder[T]) SortAsc(fields ...string) *Builder[T] {
 }
 
 // SortDesc 降序排序
-//
-// 示例：
-//
-//	builder.SortDesc("count")
 func (b *Builder[T]) SortDesc(fields ...string) *Builder[T] {
 	sort := make(mgo.D, 0, len(fields))
 	for _, field := range fields {
@@ -129,51 +100,31 @@ func (b *Builder[T]) SortDesc(fields ...string) *Builder[T] {
 	return b.Sort(sort)
 }
 
-// Limit 限制结果数量
-//
-// 示例：
-//
-//	builder.Limit(10)
+// Limit 限制数量
 func (b *Builder[T]) Limit(n int64) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$limit", Value: n}})
 	return b
 }
 
-// Skip 跳过指定数量
-//
-// 示例：
-//
-//	builder.Skip(20)
+// Skip 跳过数量
 func (b *Builder[T]) Skip(n int64) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$skip", Value: n}})
 	return b
 }
 
 // Project 添加投影阶段
-//
-// 示例：
-//
-//	builder.Project(mgo.M{"name": 1, "email": 1})
 func (b *Builder[T]) Project(projection mgo.M) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$project", Value: projection}})
 	return b
 }
 
 // Unwind 展开数组
-//
-// 示例：
-//
-//	builder.Unwind("$orders")
 func (b *Builder[T]) Unwind(path string) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$unwind", Value: path}})
 	return b
 }
 
 // Lookup 关联查询
-//
-// 示例：
-//
-//	builder.Lookup("orders", "_id", "user_id", "orders")
 func (b *Builder[T]) Lookup(from, localField, foreignField, as string) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$lookup", Value: mgo.M{
 		"from":         from,
@@ -185,20 +136,12 @@ func (b *Builder[T]) Lookup(from, localField, foreignField, as string) *Builder[
 }
 
 // AddFields 添加字段
-//
-// 示例：
-//
-//	builder.AddFields(mgo.M{"totalAmount": mgo.M{"$sum": "$items.price"}})
 func (b *Builder[T]) AddFields(fields mgo.M) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$addFields", Value: fields}})
 	return b
 }
 
 // ReplaceRoot 替换根文档
-//
-// 示例：
-//
-//	builder.ReplaceRoot("$profile")
 func (b *Builder[T]) ReplaceRoot(newRoot string) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$replaceRoot", Value: mgo.M{
 		"newRoot": newRoot,
@@ -207,10 +150,6 @@ func (b *Builder[T]) ReplaceRoot(newRoot string) *Builder[T] {
 }
 
 // Sample 随机抽样
-//
-// 示例：
-//
-//	builder.Sample(10)
 func (b *Builder[T]) Sample(size int64) *Builder[T] {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$sample", Value: mgo.M{
 		"size": size,
@@ -221,19 +160,16 @@ func (b *Builder[T]) Sample(size int64) *Builder[T] {
 // ==================== 执行方法 ====================
 
 // All 执行聚合并返回所有结果
-//
-// 示例：
-//
-//	results, err := builder.All()
 func (b *Builder[T]) All() ([]*T, error) {
-	cursor, err := b.coll.Aggregate(b.ctx, b.pipeline)
+	ctx := b.Context()
+	cursor, err := b.coll.Aggregate(ctx, b.pipeline)
 	if err != nil {
 		return nil, mgo.WrapError(err, "failed to aggregate")
 	}
-	defer cursor.Close(b.ctx)
+	defer cursor.Close(ctx)
 
 	var results []*T
-	if err := cursor.All(b.ctx, &results); err != nil {
+	if err := cursor.All(ctx, &results); err != nil {
 		return nil, mgo.WrapError(err, "failed to decode aggregate results")
 	}
 
@@ -241,10 +177,6 @@ func (b *Builder[T]) All() ([]*T, error) {
 }
 
 // One 执行聚合并返回第一条结果
-//
-// 示例：
-//
-//	result, err := builder.One()
 func (b *Builder[T]) One() (*T, error) {
 	b.Limit(1)
 	results, err := b.All()
@@ -260,25 +192,21 @@ func (b *Builder[T]) One() (*T, error) {
 }
 
 // Count 统计聚合结果数量
-//
-// 示例：
-//
-//	count, err := builder.Count()
-func (b *Builder[T]) Count() (int64, error) {
+func (b *Builder[T]) Count(ctx context.Context) (int64, error) {
 	b.pipeline = append(b.pipeline, mgo.D{{Key: "$count", Value: "count"}})
 
 	type countResult struct {
 		Count int64 `bson:"count"`
 	}
 
-	cursor, err := b.coll.Aggregate(b.ctx, b.pipeline)
+	cursor, err := b.coll.Aggregate(ctx, b.pipeline)
 	if err != nil {
 		return 0, mgo.WrapError(err, "failed to count aggregate")
 	}
-	defer cursor.Close(b.ctx)
+	defer cursor.Close(ctx)
 
 	var result countResult
-	if cursor.Next(b.ctx) {
+	if cursor.Next(ctx) {
 		if err := cursor.Decode(&result); err != nil {
 			return 0, mgo.WrapError(err, "failed to decode count result")
 		}
@@ -289,65 +217,11 @@ func (b *Builder[T]) Count() (int64, error) {
 }
 
 // Pipeline 获取构建的 pipeline
-//
-// 示例：
-//
-//	pipeline := builder.Pipeline()
 func (b *Builder[T]) Pipeline() mgo.Pipeline {
 	return b.pipeline
 }
 
-// Ctx 设置上下文
-//
-// 示例：
-//
-//	builder.Ctx(ctx).All()
-func (b *Builder[T]) Ctx(ctx context.Context) *Builder[T] {
-	b.ctx = ctx
-	return b
-}
-
-// CursorPage 使用游标的分页（适用于大数据量聚合，支持双向翻页）
-//
-// 参数：
-//   - cursor: 游标字符串（空字符串表示第一页）
-//   - perPage: 每页数量
-//
-// 特性：
-//   - 自动使用已设置的排序
-//   - 无排序时默认按 _id 降序
-//   - 支持多字段排序
-//   - 提供前后游标实现双向翻页
-//   - 游标解析失败时返回第一页
-//
-// 示例：
-//
-//	// 第一页（按 count 降序）
-//	page, err := agg.Aggregate[Stats](users).
-//	    Match(mgo.M{"status": "active"}).
-//	    GroupBy("$city").
-//	        Count("count").
-//	        Avg("avg_age", "$age").
-//	    SortDesc("count").
-//	    CursorPage("", 20)
-//
-//	// 下一页
-//	nextPage, _ := agg.Aggregate[Stats](users).
-//	    Match(mgo.M{"status": "active"}).
-//	    GroupBy("$city").
-//	        Count("count").
-//	        Avg("avg_age", "$age").
-//	    SortDesc("count").
-//	    CursorPage(page.NextCursor, 20)
-//
-//	// 上一页
-//	prevPage, _ := agg.Aggregate[Stats](users).
-//	    Match(mgo.M{"status": "active"}).
-//	    GroupBy("$city").
-//	        Count("count").
-//	        Avg("avg_age", "$age").
-//	    SortDesc("count").
-//	    CursorPage(page.PrevCursor, 20)
+// CursorPage 使用游标的分页
 func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T], error) {
 	if perPage < 1 {
 		perPage = 20
@@ -355,6 +229,8 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 	if perPage > 1000 {
 		perPage = 1000
 	}
+
+	ctx := b.Context()
 
 	// 克隆 pipeline 避免修改原始 pipeline
 	pipeline := make(mgo.Pipeline, len(b.pipeline))
@@ -371,11 +247,11 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 	if cursor != "" {
 		data, err := mgo.DecodeCursorData(cursor)
 		if err != nil {
-			// 游标解析失败，忽略并返回第一页（用户友好）
+			// 游标解析失败，忽略并返回第一页
 		} else {
 			cursorDir = data.Direction
 
-			// 根据游标方向反转排序（prev时需要反向查询）
+			// 根据游标方向反转排序
 			currentSort := sortDoc
 			if data.Direction == "prev" {
 				newSort := make(mgo.D, len(sortDoc))
@@ -393,7 +269,6 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 			filter := buildAggCursorFilter(data, sortDoc)
 			if len(filter) > 0 {
 				// 在 pipeline 中插入 $match 阶段
-				// 需要在最后一个 $match 之后、$sort 之前插入
 				insertPos := len(pipeline)
 				for i := len(pipeline) - 1; i >= 0; i-- {
 					if len(pipeline[i]) > 0 {
@@ -403,13 +278,11 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 					}
 				}
 
-				// 插入游标过滤条件
 				matchStage := mgo.D{{Key: "$match", Value: filter}}
 				pipeline = append(pipeline[:insertPos], append(mgo.Pipeline{matchStage}, pipeline[insertPos:]...)...)
 			}
 
 			// 确保排序在正确位置
-			// 移除现有的 $sort 并在游标 $match 后添加
 			var newPipeline mgo.Pipeline
 			for _, stage := range pipeline {
 				if len(stage) > 0 && stage[0].Key != "$sort" {
@@ -433,19 +306,19 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 		}
 	}
 
-	// 添加 limit（多查一条判断是否有下一页）
+	// 添加 limit
 	limit := int64(perPage + 1)
 	pipeline = append(pipeline, mgo.D{{Key: "$limit", Value: limit}})
 
 	// 执行聚合
-	aggCursor, err := b.coll.Aggregate(b.ctx, pipeline)
+	aggCursor, err := b.coll.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, mgo.WrapError(err, "failed to aggregate for cursor page")
 	}
-	defer aggCursor.Close(b.ctx)
+	defer aggCursor.Close(ctx)
 
 	var items []*T
-	if err := aggCursor.All(b.ctx, &items); err != nil {
+	if err := aggCursor.All(ctx, &items); err != nil {
 		return nil, mgo.WrapError(err, "failed to decode cursor page results")
 	}
 
@@ -464,14 +337,11 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 	// 生成游标
 	var nextCursor, prevCursor string
 
-	// 生成下一页游标（从最后一条记录）
 	if hasMore && len(items) > 0 {
 		lastItem := items[len(items)-1]
 		nextCursor = mgo.EncodeCursorFromItem(lastItem, sortDoc, "next")
 	}
 
-	// 生成上一页游标（从第一条记录）
-	// 只有在不是第一页时才生成
 	if cursor != "" && len(items) > 0 {
 		firstItem := items[0]
 		prevCursor = mgo.EncodeCursorFromItem(firstItem, sortDoc, "prev")
@@ -490,106 +360,99 @@ func (b *Builder[T]) CursorPage(cursor string, perPage int) (*mgo.CursorPage[T],
 // GroupStage 分组阶段构建器
 type GroupStage[T any] struct {
 	builder *Builder[T]
-	groupID string
-	fields  mgo.M
+	groupID interface{} // 支持复合 ID
+	fields  mgo.D       // 使用有序切片
 }
 
 // Count 统计数量
+func (g *GroupStage[T]) Count(field string) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$sum": 1}})
+	return g
+}
+
+// CountIf 条件统计数量
 //
 // 示例：
 //
-//	builder.GroupBy("$city").Count("total")
-func (g *GroupStage[T]) Count(field string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$sum": 1}
+//	g.CountIf("adults", agg.Gt("$age", 18))
+func (g *GroupStage[T]) CountIf(field string, cond interface{}) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$sum": mgo.M{"$cond": []interface{}{cond, 1, 0}}}})
 	return g
 }
 
 // Sum 求和
+func (g *GroupStage[T]) Sum(field, expr string) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$sum": expr}})
+	return g
+}
+
+// SumIf 条件求和
 //
 // 示例：
 //
-//	builder.GroupBy("$city").Sum("total_amount", "$amount")
-func (g *GroupStage[T]) Sum(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$sum": expr}
+//	g.SumIf("vip_balance", "$balance", agg.Eq("$vip", true))
+func (g *GroupStage[T]) SumIf(field string, expr interface{}, cond interface{}) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$sum": mgo.M{"$cond": []interface{}{cond, expr, 0}}}})
 	return g
 }
 
 // Avg 平均值
-//
-// 示例：
-//
-//	builder.GroupBy("$city").Avg("avg_age", "$age")
 func (g *GroupStage[T]) Avg(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$avg": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$avg": expr}})
 	return g
 }
 
 // Max 最大值
-//
-// 示例：
-//
-//	builder.GroupBy("$city").Max("max_age", "$age")
 func (g *GroupStage[T]) Max(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$max": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$max": expr}})
 	return g
 }
 
 // Min 最小值
-//
-// 示例：
-//
-//	builder.GroupBy("$city").Min("min_age", "$age")
 func (g *GroupStage[T]) Min(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$min": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$min": expr}})
 	return g
 }
 
 // First 第一个值
-//
-// 示例：
-//
-//	builder.GroupBy("$city").First("first_user", "$name")
 func (g *GroupStage[T]) First(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$first": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$first": expr}})
 	return g
 }
 
 // Last 最后一个值
-//
-// 示例：
-//
-//	builder.GroupBy("$city").Last("last_user", "$name")
 func (g *GroupStage[T]) Last(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$last": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$last": expr}})
 	return g
 }
 
 // Push 收集到数组
-//
-// 示例：
-//
-//	builder.GroupBy("$city").Push("users", "$name")
 func (g *GroupStage[T]) Push(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$push": expr}
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$push": expr}})
 	return g
 }
 
 // AddToSet 收集到数组（去重）
+func (g *GroupStage[T]) AddToSet(field, expr string) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: mgo.M{"$addToSet": expr}})
+	return g
+}
+
+// Custom 自定义聚合操作
 //
 // 示例：
 //
-//	builder.GroupBy("$city").AddToSet("tags", "$tag")
-func (g *GroupStage[T]) AddToSet(field, expr string) *GroupStage[T] {
-	g.fields[field] = mgo.M{"$addToSet": expr}
+//	g.Custom("custom_field", mgo.M{"$sum": mgo.M{"$cond": ...}})
+func (g *GroupStage[T]) Custom(field string, expr interface{}) *GroupStage[T] {
+	g.fields = append(g.fields, mgo.E{Key: field, Value: expr})
 	return g
 }
 
 // 完成分组并返回 Builder
 func (g *GroupStage[T]) build() *Builder[T] {
-	group := mgo.M{"_id": g.groupID}
-	for k, v := range g.fields {
-		group[k] = v
-	}
+	// 构建 group 文档，确保 _id 在最前面
+	group := mgo.D{{Key: "_id", Value: g.groupID}}
+	group = append(group, g.fields...)
 
 	g.builder.pipeline = append(g.builder.pipeline, mgo.D{{Key: "$group", Value: group}})
 	return g.builder
@@ -701,10 +564,6 @@ func buildAggCursorFilter(data *mgo.CursorData, sortDoc mgo.D) mgo.M {
 	}
 
 	// 多字段排序：构建复杂的 $or 条件
-	// 例如：ORDER BY age ASC, created_at DESC
-	// 游标值：{age: 25, created_at: "2024-01-01"}
-	// 条件：(age > 25) OR (age = 25 AND created_at < "2024-01-01")
-
 	conditions := make([]mgo.M, 0)
 
 	for i, field := range sortFields {

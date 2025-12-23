@@ -1,6 +1,7 @@
 package agg_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -43,15 +44,16 @@ func TestAggCursorPage(t *testing.T) {
 	if err != nil {
 		t.Skip("MongoDB not available:", err)
 	}
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db)
 
 	// 清理并插入测试数据
-	if err := users.Find().Delete(); err != nil {
+	if err := users.Find().WithContext(ctx).Delete(); err != nil {
 		t.Logf("清理数据失败: %v", err)
 	}
-	insertTestUsers(t, users)
+	insertTestUsers(t, ctx, users)
 
 	t.Run("基础游标分页", func(t *testing.T) {
 		// 第一页
@@ -300,7 +302,7 @@ func TestAggCursorPage(t *testing.T) {
 	})
 }
 
-func insertTestUsers(t *testing.T, users *mgo.TypedCollection[TestUser]) {
+func insertTestUsers(t *testing.T, ctx context.Context, users *mgo.Collection[TestUser]) {
 	cities := []string{"北京", "上海", "深圳", "广州", "杭州"}
 	now := time.Now()
 
@@ -322,7 +324,7 @@ func insertTestUsers(t *testing.T, users *mgo.TypedCollection[TestUser]) {
 
 	// 逐个插入
 	for _, user := range testUsers {
-		if _, err := users.Insert(user); err != nil {
+		if _, err := users.WithContext(ctx).Insert(user); err != nil {
 			t.Fatalf("插入测试数据失败: %v", err)
 		}
 	}

@@ -1,11 +1,13 @@
 package mgo_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/gocrud/mgo"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const testURI = "mongodb://example:example@localhost:27017/mgo_test?authSource=admin&directConnection=true"
@@ -37,12 +39,14 @@ func setupTestDB(t *testing.T) *mgo.Database {
 }
 
 func TestConnection(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run("Open", func(t *testing.T) {
 		db, err := mgo.Open(testURI)
 		if err != nil {
 			t.Fatalf("Open 失败: %v", err)
 		}
-		defer db.Close()
+		defer db.Close(ctx)
 
 		if err := db.Ping(); err != nil {
 			t.Fatalf("Ping 失败: %v", err)
@@ -57,7 +61,7 @@ func TestConnection(t *testing.T) {
 		}()
 
 		db := mgo.MustOpen(testURI)
-		defer db.Close()
+		defer db.Close(ctx)
 
 		if err := db.Ping(); err != nil {
 			t.Fatalf("Ping 失败: %v", err)
@@ -72,13 +76,14 @@ func TestConnection(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Connect 失败: %v", err)
 		}
-		defer db.Close()
+		defer db.Close(ctx)
 	})
 }
 
 func TestModelCreation(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	t.Run("AutoInferCollectionName", func(t *testing.T) {
 		users := mgo.Model[TestUser](db)
@@ -111,7 +116,8 @@ func TestModelCreation(t *testing.T) {
 
 func TestInsert(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db).WithTimestamps()
 	defer users.Truncate()
@@ -124,7 +130,7 @@ func TestInsert(t *testing.T) {
 			Status: "active",
 		}
 
-		id, err := users.Insert(user)
+		id, err := users.WithContext(ctx).Insert(user)
 		if err != nil {
 			t.Fatalf("插入失败: %v", err)
 		}
@@ -148,7 +154,7 @@ func TestInsert(t *testing.T) {
 			{Name: "王五", Email: "wangwu@example.com", Age: 22},
 		}
 
-		ids, err := users.InsertMany(userList...)
+		ids, err := users.WithContext(ctx).InsertMany(userList)
 		if err != nil {
 			t.Fatalf("批量插入失败: %v", err)
 		}
@@ -161,7 +167,8 @@ func TestInsert(t *testing.T) {
 
 func TestQuery(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db)
 	defer users.Truncate()
@@ -173,11 +180,11 @@ func TestQuery(t *testing.T) {
 		{Name: "王五", Email: "wang@test.com", Age: 22, Status: "pending", Balance: 200},
 		{Name: "赵六", Email: "zhao@test.com", Age: 35, Status: "inactive", Balance: 800},
 	}
-	_, _ = users.InsertMany(testUsers...)
+	_, _ = users.WithContext(ctx).InsertMany(testUsers)
 
 	t.Run("FindByID", func(t *testing.T) {
 		id := testUsers[0].ID
-		user, err := users.FindByID(id)
+		user, err := users.WithContext(ctx).FindByID(id)
 		if err != nil {
 			t.Fatalf("FindByID 失败: %v", err)
 		}
@@ -188,9 +195,9 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("WhereConditions", func(t *testing.T) {
-		results, err := users.Find().
-			Where("status", "active").
-			Where("age", ">", 20).
+		results, err := users.Find().WithContext(ctx).
+			Eq("status", "active").
+			Gt("age", 20).
 			All()
 
 		if err != nil {
@@ -203,7 +210,7 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("Count", func(t *testing.T) {
-		count, err := users.Find().Where("status", "active").Count()
+		count, err := users.Find().WithContext(ctx).Eq("status", "active").Count()
 		if err != nil {
 			t.Fatalf("Count 失败: %v", err)
 		}
@@ -214,7 +221,7 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("Exists", func(t *testing.T) {
-		exists, err := users.Find().Where("email", "zhang@test.com").Exists()
+		exists, err := users.Find().WithContext(ctx).Eq("email", "zhang@test.com").Exists()
 		if err != nil {
 			t.Fatalf("Exists 失败: %v", err)
 		}
@@ -225,7 +232,7 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("Pagination", func(t *testing.T) {
-		page, err := users.Find().PageList(1, 2)
+		page, err := users.Find().WithContext(ctx).PageList(1, 2)
 		if err != nil {
 			t.Fatalf("分页失败: %v", err)
 		}
@@ -246,7 +253,8 @@ func TestQuery(t *testing.T) {
 
 func TestUpdate(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db).WithTimestamps()
 	defer users.Truncate()
@@ -260,47 +268,47 @@ func TestUpdate(t *testing.T) {
 		Balance: 1000,
 		Tags:    []string{"tag1"},
 	}
-	id, _ := users.Insert(user)
+	id, _ := users.WithContext(ctx).Insert(user)
 
 	t.Run("Set", func(t *testing.T) {
-		err := users.Find().ID(id).Set("status", "inactive").Update()
+		err := users.Find().WithContext(ctx).Eq("_id", id).Set("status", "inactive").Update()
 		if err != nil {
 			t.Fatalf("Set 失败: %v", err)
 		}
 
-		updated, _ := users.FindByID(id)
+		updated, _ := users.WithContext(ctx).FindByID(id)
 		if updated.Status != "inactive" {
 			t.Errorf("期望状态 'inactive'，得到 '%s'", updated.Status)
 		}
 	})
 
 	t.Run("Inc", func(t *testing.T) {
-		err := users.Find().ID(id).Inc("age", 5).Update()
+		err := users.Find().WithContext(ctx).Eq("_id", id).Inc("age", 5).Update()
 		if err != nil {
 			t.Fatalf("Inc 失败: %v", err)
 		}
 
-		updated, _ := users.FindByID(id)
+		updated, _ := users.WithContext(ctx).FindByID(id)
 		if updated.Age != 30 {
 			t.Errorf("期望年龄 30，得到 %d", updated.Age)
 		}
 	})
 
 	t.Run("Push", func(t *testing.T) {
-		err := users.Find().ID(id).Push("tags", "tag2").Update()
+		err := users.Find().WithContext(ctx).Eq("_id", id).Push("tags", "tag2").Update()
 		if err != nil {
 			t.Fatalf("Push 失败: %v", err)
 		}
 
-		updated, _ := users.FindByID(id)
+		updated, _ := users.WithContext(ctx).FindByID(id)
 		if len(updated.Tags) != 2 {
 			t.Errorf("期望 2 个标签，得到 %d 个", len(updated.Tags))
 		}
 	})
 
 	t.Run("UpdateMany", func(t *testing.T) {
-		n, err := users.Find().
-			Where("status", "inactive").
+		n, err := users.Find().WithContext(ctx).
+			Eq("status", "inactive").
 			Set("status", "active").
 			UpdateMany()
 
@@ -316,21 +324,22 @@ func TestUpdate(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	t.Run("HardDelete", func(t *testing.T) {
 		users := mgo.Model[TestUser](db)
 		defer users.Truncate()
 
 		user := &TestUser{Name: "测试", Email: "test@test.com"}
-		id, _ := users.Insert(user)
+		id, _ := users.WithContext(ctx).Insert(user)
 
-		err := users.Find().ID(id).Delete()
+		err := users.Find().WithContext(ctx).Eq("_id", id).Delete()
 		if err != nil {
 			t.Fatalf("Delete 失败: %v", err)
 		}
 
-		_, err = users.FindByID(id)
+		_, err = users.WithContext(ctx).FindByID(id)
 		if !mgo.IsNoDocuments(err) {
 			t.Error("记录应该已被删除")
 		}
@@ -341,22 +350,22 @@ func TestDelete(t *testing.T) {
 		defer users.Truncate()
 
 		user := &TestUser{Name: "测试", Email: "test@test.com"}
-		id, _ := users.Insert(user)
+		id, _ := users.WithContext(ctx).Insert(user)
 
 		// 软删除
-		err := users.Find().ID(id).Delete()
+		err := users.Find().WithContext(ctx).Eq("_id", id).Delete()
 		if err != nil {
 			t.Fatalf("软删除失败: %v", err)
 		}
 
 		// 默认查询应该找不到
-		_, err = users.FindByID(id)
+		_, err = users.WithContext(ctx).FindByID(id)
 		if err == nil {
 			t.Error("软删除后默认查询不应该找到记录")
 		}
 
 		// WithTrashed 应该能找到
-		deleted, err := users.Find().ID(id).WithTrashed().One()
+		deleted, err := users.Find().WithContext(ctx).Eq("_id", id).WithTrashed().One()
 		if err != nil {
 			t.Fatalf("WithTrashed 查询失败: %v", err)
 		}
@@ -371,19 +380,19 @@ func TestDelete(t *testing.T) {
 		defer users.Truncate()
 
 		user := &TestUser{Name: "测试", Email: "test@test.com"}
-		id, _ := users.Insert(user)
+		id, _ := users.WithContext(ctx).Insert(user)
 
 		// 删除
-		users.Find().ID(id).Delete()
+		users.Find().WithContext(ctx).Eq("_id", id).Delete()
 
 		// 恢复
-		err := users.Find().ID(id).WithTrashed().Restore()
+		err := users.Find().WithContext(ctx).Eq("_id", id).WithTrashed().Restore()
 		if err != nil {
 			t.Fatalf("Restore 失败: %v", err)
 		}
 
 		// 恢复后应该能正常查询到
-		restored, err := users.FindByID(id)
+		restored, err := users.WithContext(ctx).FindByID(id)
 		if err != nil {
 			t.Fatalf("恢复后查询失败: %v", err)
 		}
@@ -396,14 +405,15 @@ func TestDelete(t *testing.T) {
 
 func TestTimeQuery(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "time_test").WithTimestamps()
 	defer users.Truncate()
 
 	// 插入测试数据
 	for i := 0; i < 5; i++ {
-		users.Insert(&TestUser{
+		users.WithContext(ctx).Insert(&TestUser{
 			Name:  fmt.Sprintf("User%d", i),
 			Email: fmt.Sprintf("user%d@test.com", i),
 			Age:   20 + i,
@@ -412,7 +422,7 @@ func TestTimeQuery(t *testing.T) {
 	}
 
 	t.Run("WhereToday", func(t *testing.T) {
-		results, err := users.Find().WhereToday("created_at").All()
+		results, err := users.Find().WithContext(ctx).WhereToday("created_at").All()
 		if err != nil {
 			t.Fatalf("WhereToday 失败: %v", err)
 		}
@@ -423,7 +433,7 @@ func TestTimeQuery(t *testing.T) {
 	})
 
 	t.Run("WhereLastHours", func(t *testing.T) {
-		results, err := users.Find().WhereLastHours("created_at", 1).All()
+		results, err := users.Find().WithContext(ctx).WhereLastHours("created_at", 1).All()
 		if err != nil {
 			t.Fatalf("WhereLastHours 失败: %v", err)
 		}
@@ -436,20 +446,21 @@ func TestTimeQuery(t *testing.T) {
 
 func TestFilters(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "filter_test")
 	defer users.Truncate()
 
 	// 准备测试数据
-	users.InsertMany(
-		&TestUser{Name: "张三", Age: 25, Status: "active", Tags: []string{"vip", "verified"}},
-		&TestUser{Name: "李四", Age: 30, Status: "active", Tags: []string{"verified"}},
-		&TestUser{Name: "王五", Age: 22, Status: "pending", Tags: []string{"new"}},
-	)
+	users.WithContext(ctx).InsertMany([]*TestUser{
+		{Name: "张三", Age: 25, Status: "active", Tags: []string{"vip", "verified"}},
+		{Name: "李四", Age: 30, Status: "active", Tags: []string{"verified"}},
+		{Name: "王五", Age: 22, Status: "pending", Tags: []string{"new"}},
+	})
 
 	t.Run("Eq", func(t *testing.T) {
-		results, err := users.Find().Filter(mgo.Eq("status", "active")).All()
+		results, err := users.Find().WithContext(ctx).Where(mgo.Eq("status", "active")).All()
 		if err != nil {
 			t.Fatalf("Eq 失败: %v", err)
 		}
@@ -459,7 +470,7 @@ func TestFilters(t *testing.T) {
 	})
 
 	t.Run("Gt", func(t *testing.T) {
-		results, err := users.Find().Filter(mgo.Gt("age", 25)).All()
+		results, err := users.Find().WithContext(ctx).Where(mgo.Gt("age", 25)).All()
 		if err != nil {
 			t.Fatalf("Gt 失败: %v", err)
 		}
@@ -469,7 +480,7 @@ func TestFilters(t *testing.T) {
 	})
 
 	t.Run("In", func(t *testing.T) {
-		results, err := users.Find().Filter(mgo.In("status", "active", "pending")).All()
+		results, err := users.Find().WithContext(ctx).Where(mgo.In("status", "active", "pending")).All()
 		if err != nil {
 			t.Fatalf("In 失败: %v", err)
 		}
@@ -479,7 +490,7 @@ func TestFilters(t *testing.T) {
 	})
 
 	t.Run("And", func(t *testing.T) {
-		results, err := users.Find().Filter(
+		results, err := users.Find().WithContext(ctx).Where(
 			mgo.And(
 				mgo.Eq("status", "active"),
 				mgo.Gt("age", 25),
@@ -495,7 +506,7 @@ func TestFilters(t *testing.T) {
 	})
 
 	t.Run("Or", func(t *testing.T) {
-		results, err := users.Find().Filter(
+		results, err := users.Find().WithContext(ctx).Where(
 			mgo.Or(
 				mgo.Eq("status", "pending"),
 				mgo.Gt("age", 28),
@@ -513,7 +524,8 @@ func TestFilters(t *testing.T) {
 
 func TestPagination(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "page_test")
 	defer users.Truncate()
@@ -528,10 +540,10 @@ func TestPagination(t *testing.T) {
 			Status: "active",
 		}
 	}
-	_, _ = users.InsertMany(testUsers...)
+	_, _ = users.WithContext(ctx).InsertMany(testUsers)
 
 	t.Run("StandardPagination", func(t *testing.T) {
-		page, err := users.Find().PageList(1, 10)
+		page, err := users.Find().WithContext(ctx).PageList(1, 10)
 		if err != nil {
 			t.Fatalf("分页失败: %v", err)
 		}
@@ -550,7 +562,7 @@ func TestPagination(t *testing.T) {
 	})
 
 	t.Run("SimplePagination", func(t *testing.T) {
-		page, err := users.Find().SimplePageList(2, 10)
+		page, err := users.Find().WithContext(ctx).SimplePageList(2, 10)
 		if err != nil {
 			t.Fatalf("简化分页失败: %v", err)
 		}
@@ -567,7 +579,8 @@ func TestPagination(t *testing.T) {
 
 func TestTransaction(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "tx_test")
 	defer users.Truncate()
@@ -578,13 +591,13 @@ func TestTransaction(t *testing.T) {
 		Email:   "tx@test.com",
 		Balance: 1000,
 	}
-	userID, _ := users.Insert(user)
+	userID, _ := users.WithContext(ctx).Insert(user)
 
 	t.Run("TransactionSuccess", func(t *testing.T) {
 		err := db.Transaction(func(sess *mgo.Session) error {
 			txUsers := mgo.Model[TestUser](sess, "tx_test")
 
-			return txUsers.Find().ID(userID).Inc("balance", -100).Update()
+			return txUsers.Find().Eq("_id", userID).Inc("balance", -100).WithContext(sess.Context()).Update()
 		})
 
 		if err != nil {
@@ -592,19 +605,21 @@ func TestTransaction(t *testing.T) {
 		}
 
 		// 验证余额
-		updated, _ := users.FindByID(userID)
+		updated, _ := users.WithContext(ctx).FindByID(userID)
 		if updated.Balance != 900 {
 			t.Errorf("期望余额 900，得到 %.2f", updated.Balance)
 		}
 	})
 
 	t.Run("TransactionRollback", func(t *testing.T) {
-		initialBalance := user.Balance
+		// 重新获取当前余额
+		current, _ := users.WithContext(ctx).FindByID(userID)
+		initialBalance := current.Balance
 
 		err := db.Transaction(func(sess *mgo.Session) error {
 			txUsers := mgo.Model[TestUser](sess, "tx_test")
 
-			if err := txUsers.Find().ID(userID).Inc("balance", -500).Update(); err != nil {
+			if err := txUsers.Find().Eq("_id", userID).Inc("balance", -500).WithContext(sess.Context()).Update(); err != nil {
 				return err
 			}
 
@@ -617,9 +632,9 @@ func TestTransaction(t *testing.T) {
 		}
 
 		// 验证余额未变化
-		current, _ := users.FindByID(userID)
-		if current.Balance == initialBalance-500 {
-			t.Error("事务应该已回滚，余额不应该变化")
+		current, _ = users.WithContext(ctx).FindByID(userID)
+		if current.Balance != initialBalance {
+			t.Errorf("事务应该已回滚，余额不应该变化。期望 %.2f，得到 %.2f", initialBalance, current.Balance)
 		}
 	})
 }
@@ -700,27 +715,28 @@ func TestHelpers(t *testing.T) {
 
 func TestErrorHandling(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "error_test")
 	defer users.Truncate()
 
 	t.Run("IsNoDocuments", func(t *testing.T) {
-		_, err := users.FindByID(mgo.NewObjectID())
+		_, err := users.WithContext(ctx).FindByID(mgo.NewObjectID())
 		if !mgo.IsNoDocuments(err) {
 			t.Error("应该返回 ErrNoDocuments")
 		}
 	})
 
 	t.Run("OneOrNil", func(t *testing.T) {
-		result := users.Find().Where("email", "nonexistent@test.com").OneOrNil()
+		result := users.Find().WithContext(ctx).Eq("email", "nonexistent@test.com").OneOrNil()
 		if result != nil {
 			t.Error("OneOrNil 应该返回 nil")
 		}
 	})
 
 	t.Run("AllOrEmpty", func(t *testing.T) {
-		results := users.Find().Where("status", "nonexistent").AllOrEmpty()
+		results := users.Find().WithContext(ctx).Eq("status", "nonexistent").AllOrEmpty()
 		if results == nil {
 			t.Error("AllOrEmpty 不应该返回 nil")
 		}
@@ -732,7 +748,8 @@ func TestErrorHandling(t *testing.T) {
 
 func TestCursorPagination(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	ctx := context.Background()
+	defer db.Close(ctx)
 
 	users := mgo.Model[TestUser](db, "cursor_page_test")
 	defer users.Truncate()
@@ -747,10 +764,10 @@ func TestCursorPagination(t *testing.T) {
 			Status: "active",
 		}
 	}
-	_, _ = users.InsertMany(testUsers...)
+	_, _ = users.WithContext(ctx).InsertMany(testUsers)
 
 	t.Run("FirstPage", func(t *testing.T) {
-		page, err := users.Find().Desc("_id").CursorPage("", 10)
+		page, err := users.Find().WithContext(ctx).Desc("_id").CursorPage("", 10)
 		if err != nil {
 			t.Fatalf("游标分页失败: %v", err)
 		}
@@ -774,13 +791,13 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("NextPage", func(t *testing.T) {
 		// 获取第一页
-		page1, err := users.Find().Desc("_id").CursorPage("", 10)
+		page1, err := users.Find().WithContext(ctx).Desc("_id").CursorPage("", 10)
 		if err != nil {
 			t.Fatalf("第一页失败: %v", err)
 		}
 
 		// 使用游标获取第二页
-		page2, err := users.Find().Desc("_id").CursorPage(page1.NextCursor, 10)
+		page2, err := users.Find().WithContext(ctx).Desc("_id").CursorPage(page1.NextCursor, 10)
 		if err != nil {
 			t.Fatalf("第二页失败: %v", err)
 		}
@@ -801,11 +818,11 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("PrevPage", func(t *testing.T) {
 		// 先到第二页
-		page1, _ := users.Find().Desc("_id").CursorPage("", 10)
-		page2, _ := users.Find().Desc("_id").CursorPage(page1.NextCursor, 10)
+		page1, _ := users.Find().WithContext(ctx).Desc("_id").CursorPage("", 10)
+		page2, _ := users.Find().WithContext(ctx).Desc("_id").CursorPage(page1.NextCursor, 10)
 
 		// 使用 PrevCursor 返回第一页
-		pagePrev, err := users.Find().Desc("_id").CursorPage(page2.PrevCursor, 10)
+		pagePrev, err := users.Find().WithContext(ctx).Desc("_id").CursorPage(page2.PrevCursor, 10)
 		if err != nil {
 			t.Fatalf("返回上一页失败: %v", err)
 		}
@@ -827,7 +844,7 @@ func TestCursorPagination(t *testing.T) {
 		var err error
 
 		for {
-			page, err = users.Find().Desc("_id").CursorPage(cursor, 10)
+			page, err = users.Find().WithContext(ctx).Desc("_id").CursorPage(cursor, 10)
 			if err != nil {
 				t.Fatalf("分页失败: %v", err)
 			}
@@ -851,7 +868,7 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("CustomSort", func(t *testing.T) {
 		// 按年龄升序
-		page, err := users.Find().Asc("age").CursorPage("", 10)
+		page, err := users.Find().WithContext(ctx).Asc("age").CursorPage("", 10)
 		if err != nil {
 			t.Fatalf("自定义排序失败: %v", err)
 		}
@@ -868,7 +885,7 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("MultiFieldSort", func(t *testing.T) {
 		// 多字段排序（已修复：使用 D 类型保证排序顺序）
-		page, err := users.Find().
+		page, err := users.Find().WithContext(ctx).
 			Desc("status").
 			Asc("age").
 			CursorPage("", 10)
@@ -884,8 +901,8 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("WithFilter", func(t *testing.T) {
 		// 带过滤条件的游标分页
-		page, err := users.Find().
-			Where("age", ">", 30).
+		page, err := users.Find().WithContext(ctx).
+			Gt("age", 30).
 			Desc("age").
 			CursorPage("", 10)
 
@@ -903,7 +920,7 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("InvalidCursor", func(t *testing.T) {
 		// 无效游标应该返回第一页（容错处理）
-		page, err := users.Find().Desc("_id").CursorPage("invalid_cursor", 10)
+		page, err := users.Find().WithContext(ctx).Desc("_id").CursorPage("invalid_cursor", 10)
 		if err != nil {
 			t.Fatalf("无效游标处理失败: %v", err)
 		}
@@ -916,8 +933,8 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("EmptyResult", func(t *testing.T) {
 		// 查询不存在的数据
-		page, err := users.Find().
-			Where("status", "nonexistent").
+		page, err := users.Find().WithContext(ctx).
+			Eq("status", "nonexistent").
 			CursorPage("", 10)
 
 		if err != nil {
@@ -939,7 +956,7 @@ func TestCursorPagination(t *testing.T) {
 
 	t.Run("PageSizeLimit", func(t *testing.T) {
 		// 测试每页数量限制
-		page, err := users.Find().CursorPage("", 2000) // 超过最大限制
+		page, err := users.Find().WithContext(ctx).CursorPage("", 2000) // 超过最大限制
 		if err != nil {
 			t.Fatalf("分页失败: %v", err)
 		}
@@ -956,7 +973,7 @@ func TestCursorPagination(t *testing.T) {
 		var cursor string
 
 		for {
-			page, err := users.Find().Desc("_id").CursorPage(cursor, 10)
+			page, err := users.Find().WithContext(ctx).Desc("_id").CursorPage(cursor, 10)
 			if err != nil {
 				t.Fatalf("遍历失败: %v", err)
 			}
@@ -986,6 +1003,7 @@ func TestCursorPagination(t *testing.T) {
 }
 
 func TestCrossDBTransaction(t *testing.T) {
+	ctx := context.Background()
 	// 创建 Client 实例
 	client, err := mgo.OpenClient(testURI)
 	if err != nil {
@@ -1004,8 +1022,8 @@ func TestCrossDBTransaction(t *testing.T) {
 
 	t.Run("CrossDBTransactionSuccess", func(t *testing.T) {
 		// 清理数据
-		users.Truncate()
-		logs.Truncate()
+		users.WithContext(ctx).DeleteMany(bson.M{})
+		logs.WithContext(ctx).DeleteMany(bson.M{})
 
 		// 插入测试用户
 		user := &TestUser{
@@ -1013,7 +1031,7 @@ func TestCrossDBTransaction(t *testing.T) {
 			Email:   "crossdb@test.com",
 			Balance: 1000,
 		}
-		userID, _ := users.Insert(user)
+		userID, _ := users.WithContext(ctx).Insert(user)
 
 		// 跨库事务
 		err := client.Transaction(func(sess *mgo.ClientSession) error {
@@ -1024,7 +1042,7 @@ func TestCrossDBTransaction(t *testing.T) {
 			txLogs := mgo.Model[TestUser](logsDB, "logs")
 
 			// 更新用户余额
-			if err := txUsers.Find().ID(userID).Inc("balance", -100).Update(); err != nil {
+			if err := txUsers.Find().ID(userID).Inc("balance", -100).WithContext(sess.Context()).Update(); err != nil {
 				return err
 			}
 
@@ -1034,7 +1052,7 @@ func TestCrossDBTransaction(t *testing.T) {
 				Email:  "log@test.com",
 				Status: "completed",
 			}
-			if _, err := txLogs.Insert(log); err != nil {
+			if _, err := txLogs.WithContext(sess.Context()).Insert(log); err != nil {
 				return err
 			}
 
@@ -1046,12 +1064,12 @@ func TestCrossDBTransaction(t *testing.T) {
 		}
 
 		// 验证结果
-		updated, _ := users.FindByID(userID)
+		updated, _ := users.WithContext(ctx).FindByID(userID)
 		if updated.Balance != 900 {
 			t.Errorf("期望余额 900，得到 %.2f", updated.Balance)
 		}
 
-		logCount, _ := logs.Find().Count()
+		logCount, _ := logs.Find().WithContext(ctx).Count()
 		if logCount != 1 {
 			t.Errorf("期望日志数 1，得到 %d", logCount)
 		}
@@ -1059,15 +1077,15 @@ func TestCrossDBTransaction(t *testing.T) {
 
 	t.Run("CrossDBTransactionRollback", func(t *testing.T) {
 		// 清理数据
-		users.Truncate()
-		logs.Truncate()
+		users.WithContext(ctx).DeleteMany(bson.M{})
+		logs.WithContext(ctx).DeleteMany(bson.M{})
 
 		user := &TestUser{
 			Name:    "测试用户",
 			Email:   "rollback@test.com",
 			Balance: 1000,
 		}
-		userID, _ := users.Insert(user)
+		userID, _ := users.WithContext(ctx).Insert(user)
 
 		// 跨库事务（应该回滚）
 		err := client.Transaction(func(sess *mgo.ClientSession) error {
@@ -1078,7 +1096,7 @@ func TestCrossDBTransaction(t *testing.T) {
 			txLogs := mgo.Model[TestUser](logsDB, "logs")
 
 			// 更新用户余额
-			if err := txUsers.Find().ID(userID).Inc("balance", -100).Update(); err != nil {
+			if err := txUsers.Find().ID(userID).Inc("balance", -100).WithContext(sess.Context()).Update(); err != nil {
 				return err
 			}
 
@@ -1087,7 +1105,7 @@ func TestCrossDBTransaction(t *testing.T) {
 				Name:  "转账日志",
 				Email: "log@test.com",
 			}
-			if _, err := txLogs.Insert(log); err != nil {
+			if _, err := txLogs.WithContext(sess.Context()).Insert(log); err != nil {
 				return err
 			}
 
@@ -1100,13 +1118,13 @@ func TestCrossDBTransaction(t *testing.T) {
 		}
 
 		// 验证回滚：余额应该保持不变
-		current, _ := users.FindByID(userID)
+		current, _ := users.WithContext(ctx).FindByID(userID)
 		if current.Balance != 1000 {
 			t.Errorf("事务应该已回滚，期望余额 1000，得到 %.2f", current.Balance)
 		}
 
 		// 验证回滚：日志应该没有被插入
-		logCount, _ := logs.Find().Count()
+		logCount, _ := logs.Find().WithContext(ctx).Count()
 		if logCount != 0 {
 			t.Errorf("事务应该已回滚，期望日志数 0，得到 %d", logCount)
 		}
@@ -1114,8 +1132,8 @@ func TestCrossDBTransaction(t *testing.T) {
 
 	t.Run("CrossDBWithMultipleDatabases", func(t *testing.T) {
 		// 清理数据
-		users.Truncate()
-		logs.Truncate()
+		users.WithContext(ctx).DeleteMany(bson.M{})
+		logs.WithContext(ctx).DeleteMany(bson.M{})
 
 		// 使用 Databases 辅助方法
 		err := client.Transaction(func(sess *mgo.ClientSession) error {
@@ -1132,7 +1150,7 @@ func TestCrossDBTransaction(t *testing.T) {
 				Email:  "multi@test.com",
 				Status: "active",
 			}
-			if _, err := txUsers.Insert(user); err != nil {
+			if _, err := txUsers.WithContext(sess.Context()).Insert(user); err != nil {
 				return err
 			}
 
@@ -1140,7 +1158,7 @@ func TestCrossDBTransaction(t *testing.T) {
 				Name:  "多库日志",
 				Email: "multilog@test.com",
 			}
-			if _, err := txLogs.Insert(log); err != nil {
+			if _, err := txLogs.WithContext(sess.Context()).Insert(log); err != nil {
 				return err
 			}
 
@@ -1152,8 +1170,8 @@ func TestCrossDBTransaction(t *testing.T) {
 		}
 
 		// 验证数据
-		userCount, _ := users.Find().Count()
-		logCount, _ := logs.Find().Count()
+		userCount, _ := users.Find().WithContext(ctx).Count()
+		logCount, _ := logs.Find().WithContext(ctx).Count()
 
 		if userCount != 1 {
 			t.Errorf("期望用户数 1，得到 %d", userCount)

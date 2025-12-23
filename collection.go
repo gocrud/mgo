@@ -6,144 +6,107 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-// ==================== Collection 传统集合封装 ====================
-
-// Collection MongoDB 集合封装（传统方式）
+// Collection 泛型集合封装
 //
-// 提供非泛型的集合操作，适用于动态类型场景
+// 提供类型安全的集合操作
 //
 // 示例：
 //
-//	users := db.Collection("users")
-//	var user User
-//	err := users.FindOne(mgo.M{"email": email}, &user)
-type Collection struct {
+//	users := mgo.Model[User](db)
+//	user, err := users.FindByID(ctx, id)
+type Collection[T any] struct {
 	coll *mongo.Collection
 	db   *Database
+	ctx  context.Context
 	opts *CollectionOptions
 }
 
 // newCollection 创建新的集合实例
-func newCollection(db *Database, coll *mongo.Collection, opts ...CollectionOption) *Collection {
-	options := &CollectionOptions{
-		Context: db.Context(),
-	}
-
+func newCollection[T any](db *Database, coll *mongo.Collection, opts ...CollectionOption) *Collection[T] {
+	options := &CollectionOptions{}
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	return &Collection{
+	return &Collection[T]{
 		coll: coll,
 		db:   db,
+		ctx:  context.Background(),
 		opts: options,
 	}
 }
 
+// WithContext 设置上下文
+func (c *Collection[T]) WithContext(ctx context.Context) *Collection[T] {
+	// 浅拷贝
+	newC := *c
+	newC.ctx = ctx
+	return &newC
+}
+
+// Context 获取上下文
+func (c *Collection[T]) Context() context.Context {
+	if c.ctx == nil {
+		return context.Background()
+	}
+	return c.ctx
+}
+
 // Name 获取集合名称
-//
-// 示例：
-//
-//	name := coll.Name()
-func (c *Collection) Name() string {
+func (c *Collection[T]) Name() string {
 	return c.coll.Name()
 }
 
 // Database 获取所属数据库
-//
-// 示例：
-//
-//	db := coll.Database()
-func (c *Collection) Database() *Database {
+func (c *Collection[T]) Database() *Database {
 	return c.db
 }
 
 // Native 返回原生 mongo.Collection
-//
-// 示例：
-//
-//	nativeColl := coll.Native()
-func (c *Collection) Native() *mongo.Collection {
+func (c *Collection[T]) Native() *mongo.Collection {
 	return c.coll
 }
 
-// Context 获取默认上下文
-func (c *Collection) Context() context.Context {
-	return getContext(c.opts.Context)
-}
-
 // Options 获取集合选项
-func (c *Collection) Options() *CollectionOptions {
+func (c *Collection[T]) Options() *CollectionOptions {
 	return c.opts
 }
 
-// ==================== 基础查询方法 ====================
-
-// Find 创建查询构建器（链式查询）
-//
-// 示例：
-//
-//	var users []User
-//	err := coll.Find().
-//	    Where("status", "active").
-//	    Where("age", ">", 18).
-//	    OrderBy("created_at").
-//	    Limit(10).
-//	    All(&users)
-func (c *Collection) Find() *UntypedQuery {
-	return newUntypedQuery(c)
+// Find 创建查询构建器
+func (c *Collection[T]) Find() *Query[T] {
+	return newQuery(c).WithContext(c.ctx)
 }
 
 // FindOne 查询单条文档
-//
-// 示例：
-//
-//	var user User
-//	err := coll.FindOne(mgo.M{"email": email}, &user)
-func (c *Collection) FindOne(filter M, result interface{}) error {
-	ctx := c.Context()
-	err := c.coll.FindOne(ctx, filter).Decode(result)
+func (c *Collection[T]) FindOne(filter interface{}) (*T, error) {
+	var result T
+	err := c.coll.FindOne(c.ctx, filter).Decode(&result)
 	if err != nil {
-		return WrapError(err, "failed to find one")
+		return nil, WrapError(err, "failed to find one")
 	}
-	return nil
+	return &result, nil
 }
 
 // FindByID 根据 ID 查询文档
-//
-// 示例：
-//
-//	var user User
-//	err := coll.FindByID(id, &user)
-func (c *Collection) FindByID(id interface{}, result interface{}) error {
-	return c.FindOne(M{"_id": id}, result)
+func (c *Collection[T]) FindByID(id interface{}) (*T, error) {
+	return c.Find().ID(id).One()
 }
 
-// ==================== 插入方法 ====================
-
 // Insert 插入单条文档
-//
-// 示例：
-//
-//	id, err := coll.Insert(&user)
-func (c *Collection) Insert(doc interface{}) (ObjectID, error) {
-	ctx := c.Context()
-
+func (c *Collection[T]) Insert(doc *T) (ObjectID, error) {
 	// 应用时间戳
 	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
 		applyTimestamps(doc, c.opts.Timestamps, true)
 	}
 
-	result, err := c.coll.InsertOne(ctx, doc)
+	result, err := c.coll.InsertOne(c.ctx, doc)
 	if err != nil {
 		return NilObjectID, WrapError(err, "failed to insert")
 	}
 
-	// 回填 ID 到原始文档
 	if oid, ok := result.InsertedID.(ObjectID); ok {
-		if err := SetFieldValue(doc, "_id", oid); err == nil {
-			return oid, nil
-		}
+		// 尝试回填 ID
+		SetFieldValue(doc, "_id", oid)
 		return oid, nil
 	}
 
@@ -151,25 +114,21 @@ func (c *Collection) Insert(doc interface{}) (ObjectID, error) {
 }
 
 // InsertMany 插入多条文档
-//
-// 示例：
-//
-//	ids, err := coll.InsertMany(&user1, &user2, &user3)
-func (c *Collection) InsertMany(docs ...interface{}) ([]ObjectID, error) {
+func (c *Collection[T]) InsertMany(docs []*T) ([]ObjectID, error) {
 	if len(docs) == 0 {
 		return nil, nil
 	}
 
-	ctx := c.Context()
-
-	// 应用时间戳
-	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
-		for _, doc := range docs {
+	// 转换 interface{} 切片以适配驱动
+	items := make([]interface{}, len(docs))
+	for i, doc := range docs {
+		if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
 			applyTimestamps(doc, c.opts.Timestamps, true)
 		}
+		items[i] = doc
 	}
 
-	result, err := c.coll.InsertMany(ctx, docs)
+	result, err := c.coll.InsertMany(c.ctx, items)
 	if err != nil {
 		return nil, WrapError(err, "failed to insert many")
 	}
@@ -178,7 +137,6 @@ func (c *Collection) InsertMany(docs ...interface{}) ([]ObjectID, error) {
 	for i, id := range result.InsertedIDs {
 		if oid, ok := id.(ObjectID); ok {
 			ids = append(ids, oid)
-			// 回填 ID 到原始文档
 			if i < len(docs) {
 				SetFieldValue(docs[i], "_id", oid)
 			}
@@ -188,19 +146,9 @@ func (c *Collection) InsertMany(docs ...interface{}) ([]ObjectID, error) {
 	return ids, nil
 }
 
-// ==================== 更新方法 ====================
-
 // UpdateOne 更新单条文档
-//
-// 示例：
-//
-//	err := coll.UpdateOne(
-//	    mgo.M{"_id": id},
-//	    mgo.M{"$set": mgo.M{"status": "inactive"}},
-//	)
-func (c *Collection) UpdateOne(filter, update interface{}) error {
-	ctx := c.Context()
-	_, err := c.coll.UpdateOne(ctx, filter, update)
+func (c *Collection[T]) UpdateOne(filter, update interface{}) error {
+	_, err := c.coll.UpdateOne(c.ctx, filter, update)
 	if err != nil {
 		return WrapError(err, "failed to update one")
 	}
@@ -208,25 +156,13 @@ func (c *Collection) UpdateOne(filter, update interface{}) error {
 }
 
 // UpdateByID 根据 ID 更新文档
-//
-// 示例：
-//
-//	err := coll.UpdateByID(id, mgo.M{"$set": mgo.M{"status": "inactive"}})
-func (c *Collection) UpdateByID(id, update interface{}) error {
+func (c *Collection[T]) UpdateByID(id, update interface{}) error {
 	return c.UpdateOne(M{"_id": id}, update)
 }
 
 // UpdateMany 更新多条文档
-//
-// 示例：
-//
-//	n, err := coll.UpdateMany(
-//	    mgo.M{"status": "pending"},
-//	    mgo.M{"$set": mgo.M{"status": "active"}},
-//	)
-func (c *Collection) UpdateMany(filter, update interface{}) (int64, error) {
-	ctx := c.Context()
-	result, err := c.coll.UpdateMany(ctx, filter, update)
+func (c *Collection[T]) UpdateMany(filter, update interface{}) (int64, error) {
+	result, err := c.coll.UpdateMany(c.ctx, filter, update)
 	if err != nil {
 		return 0, WrapError(err, "failed to update many")
 	}
@@ -234,29 +170,17 @@ func (c *Collection) UpdateMany(filter, update interface{}) (int64, error) {
 }
 
 // ReplaceOne 替换单条文档
-//
-// 示例：
-//
-//	err := coll.ReplaceOne(mgo.M{"_id": id}, newUser)
-func (c *Collection) ReplaceOne(filter, replacement interface{}) error {
-	ctx := c.Context()
-	_, err := c.coll.ReplaceOne(ctx, filter, replacement)
+func (c *Collection[T]) ReplaceOne(filter interface{}, replacement *T) error {
+	_, err := c.coll.ReplaceOne(c.ctx, filter, replacement)
 	if err != nil {
 		return WrapError(err, "failed to replace one")
 	}
 	return nil
 }
 
-// ==================== 删除方法 ====================
-
 // DeleteOne 删除单条文档
-//
-// 示例：
-//
-//	err := coll.DeleteOne(mgo.M{"_id": id})
-func (c *Collection) DeleteOne(filter interface{}) error {
-	ctx := c.Context()
-	_, err := c.coll.DeleteOne(ctx, filter)
+func (c *Collection[T]) DeleteOne(filter interface{}) error {
+	_, err := c.coll.DeleteOne(c.ctx, filter)
 	if err != nil {
 		return WrapError(err, "failed to delete one")
 	}
@@ -264,38 +188,22 @@ func (c *Collection) DeleteOne(filter interface{}) error {
 }
 
 // DeleteByID 根据 ID 删除文档
-//
-// 示例：
-//
-//	err := coll.DeleteByID(id)
-func (c *Collection) DeleteByID(id interface{}) error {
+func (c *Collection[T]) DeleteByID(id interface{}) error {
 	return c.DeleteOne(M{"_id": id})
 }
 
 // DeleteMany 删除多条文档
-//
-// 示例：
-//
-//	n, err := coll.DeleteMany(mgo.M{"status": "expired"})
-func (c *Collection) DeleteMany(filter interface{}) (int64, error) {
-	ctx := c.Context()
-	result, err := c.coll.DeleteMany(ctx, filter)
+func (c *Collection[T]) DeleteMany(filter interface{}) (int64, error) {
+	result, err := c.coll.DeleteMany(c.ctx, filter)
 	if err != nil {
 		return 0, WrapError(err, "failed to delete many")
 	}
 	return result.DeletedCount, nil
 }
 
-// ==================== 聚合方法 ====================
-
 // CountDocuments 统计文档数量
-//
-// 示例：
-//
-//	count, err := coll.CountDocuments(mgo.M{"status": "active"})
-func (c *Collection) CountDocuments(filter interface{}) (int64, error) {
-	ctx := c.Context()
-	count, err := c.coll.CountDocuments(ctx, filter)
+func (c *Collection[T]) CountDocuments(filter interface{}) (int64, error) {
+	count, err := c.coll.CountDocuments(c.ctx, filter)
 	if err != nil {
 		return 0, WrapError(err, "failed to count documents")
 	}
@@ -303,13 +211,8 @@ func (c *Collection) CountDocuments(filter interface{}) (int64, error) {
 }
 
 // Distinct 获取字段的不重复值
-//
-// 示例：
-//
-//	values, err := coll.Distinct("city", mgo.M{"status": "active"})
-func (c *Collection) Distinct(fieldName string, filter interface{}) ([]interface{}, error) {
-	ctx := c.Context()
-	distinctResult := c.coll.Distinct(ctx, fieldName, filter)
+func (c *Collection[T]) Distinct(fieldName string, filter interface{}) ([]interface{}, error) {
+	distinctResult := c.coll.Distinct(c.ctx, fieldName, filter)
 	if distinctResult.Err() != nil {
 		return nil, WrapError(distinctResult.Err(), "failed to get distinct values")
 	}
@@ -323,76 +226,86 @@ func (c *Collection) Distinct(fieldName string, filter interface{}) ([]interface
 }
 
 // Aggregate 执行聚合查询
-//
-// 示例：
-//
-//	pipeline := mgo.Pipeline{
-//	    {{"$match", mgo.M{"status": "active"}}},
-//	    {{"$group", mgo.M{"_id": "$city", "count": mgo.M{"$sum": 1}}}},
-//	}
-//	var results []CityStats
-//	err := coll.Aggregate(pipeline, &results)
-func (c *Collection) Aggregate(pipeline interface{}, results interface{}) error {
-	ctx := c.Context()
-	cursor, err := c.coll.Aggregate(ctx, pipeline)
+func (c *Collection[T]) Aggregate(pipeline interface{}, results interface{}) error {
+	cursor, err := c.coll.Aggregate(c.ctx, pipeline)
 	if err != nil {
 		return WrapError(err, "failed to aggregate")
 	}
-	defer cursor.Close(ctx)
+	defer cursor.Close(c.ctx)
 
-	if err := cursor.All(ctx, results); err != nil {
+	if err := cursor.All(c.ctx, results); err != nil {
 		return WrapError(err, "failed to decode aggregate results")
 	}
 	return nil
 }
 
-// ==================== 索引方法 ====================
-
-// CreateIndex 创建索引
-//
-// 示例：
-//
-//	err := coll.CreateIndex("email", true) // unique index
-func (c *Collection) CreateIndex(field string, unique bool) error {
-	// TODO: 实现索引创建
-	return nil
-}
-
-// DropIndex 删除索引
-//
-// 示例：
-//
-//	err := coll.DropIndex("email_1")
-func (c *Collection) DropIndex(name string) error {
-	// TODO: 实现索引删除
-	return nil
-}
-
-// ==================== 其他方法 ====================
-
 // Drop 删除集合
-//
-// 示例：
-//
-//	err := coll.Drop()
-func (c *Collection) Drop() error {
-	ctx := c.Context()
-	if err := c.coll.Drop(ctx); err != nil {
+func (c *Collection[T]) Drop() error {
+	if err := c.coll.Drop(c.ctx); err != nil {
 		return WrapError(err, "failed to drop collection")
 	}
 	return nil
 }
 
-// EstimatedDocumentCount 估算文档数量（快速）
-//
-// 示例：
-//
-//	count, err := coll.EstimatedDocumentCount()
-func (c *Collection) EstimatedDocumentCount() (int64, error) {
-	ctx := c.Context()
-	count, err := c.coll.EstimatedDocumentCount(ctx)
+// Truncate 清空集合
+func (c *Collection[T]) Truncate() error {
+	_, err := c.coll.DeleteMany(c.ctx, M{})
+	if err != nil {
+		return WrapError(err, "failed to truncate collection")
+	}
+	return nil
+}
+
+// EstimatedDocumentCount 估算文档数量
+func (c *Collection[T]) EstimatedDocumentCount() (int64, error) {
+	count, err := c.coll.EstimatedDocumentCount(c.ctx)
 	if err != nil {
 		return 0, WrapError(err, "failed to estimate document count")
 	}
 	return count, nil
+}
+
+// WithTimestamps 启用自动时间戳
+func (c *Collection[T]) WithTimestamps(fields ...string) *Collection[T] {
+	createdField := "created_at"
+	updatedField := "updated_at"
+
+	if len(fields) > 0 {
+		createdField = fields[0]
+	}
+	if len(fields) > 1 {
+		updatedField = fields[1]
+	}
+
+	c.opts.Timestamps = &TimestampConfig{
+		CreatedField: createdField,
+		UpdatedField: updatedField,
+		Enabled:      true,
+	}
+	return c
+}
+
+// WithSoftDelete 启用软删除
+func (c *Collection[T]) WithSoftDelete(fields ...string) *Collection[T] {
+	deletedField := "deleted_at"
+
+	if len(fields) > 0 {
+		deletedField = fields[0]
+	}
+
+	c.opts.SoftDelete = &SoftDeleteConfig{
+		Field:   deletedField,
+		Enabled: true,
+	}
+	return c
+}
+
+// Count 统计符合条件的文档数量
+func (c *Collection[T]) Count(filter interface{}) (int64, error) {
+	return c.coll.CountDocuments(c.ctx, filter)
+}
+
+// CountAll 统计所有文档数量
+func (c *Collection[T]) CountAll() (int64, error) {
+	return c.coll.CountDocuments(c.ctx, M{})
 }

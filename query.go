@@ -6,157 +6,175 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-// ==================== Query 泛型查询构建器 ====================
-
 // Query 泛型查询构建器
-//
-// 提供流畅的链式查询API
-//
-// 示例：
-//
-//	results, err := users.Find().
-//	    Where("status", "active").
-//	    Where("age", ">", 18).
-//	    OrderBy("created_at").
-//	    Limit(10).
-//	    All()
 type Query[T any] struct {
-	coll        *TypedCollection[T]
+	coll        *Collection[T]
+	ctx         context.Context
 	filter      M
 	sort        D
 	skip        *int64
 	limit       *int64
 	projection  M
 	omit        M
-	ctx         context.Context
 	withTrashed bool
 	onlyTrashed bool
+	err         error
 }
 
 // newQuery 创建新的查询构建器
-func newQuery[T any](coll *TypedCollection[T]) *Query[T] {
+func newQuery[T any](coll *Collection[T]) *Query[T] {
 	return &Query[T]{
 		coll:   coll,
+		ctx:    context.Background(),
 		filter: M{},
 		sort:   D{},
-		ctx:    coll.Context(),
 	}
+}
+
+// WithContext 设置上下文
+func (q *Query[T]) WithContext(ctx context.Context) *Query[T] {
+	q.ctx = ctx
+	return q
+}
+
+// Context 获取上下文
+func (q *Query[T]) Context() context.Context {
+	if q.ctx == nil {
+		return context.Background()
+	}
+	return q.ctx
+}
+
+// ==================== 动态条件方法 ====================
+
+// When 条件执行闭包
+//
+// 当 condition 为 true 时，执行 fn。
+// 用于需要同时控制多个操作的场景。
+//
+// 示例：
+//
+//	q.When(age > 18, func(q *Query[T]) {
+//	    q.Gt("age", 18).Eq("status", "adult")
+//	})
+func (q *Query[T]) When(condition bool, fn func(q *Query[T])) *Query[T] {
+	if condition {
+		fn(q)
+	}
+	return q
 }
 
 // ==================== 条件方法 ====================
 
-// Where 添加查询条件
-//
-// 支持两种形式：
-// 1. Where(field, value) - 等于条件
-// 2. Where(field, operator, value) - 带操作符的条件
-//
-// 示例：
-//
-//	query.Where("status", "active")  // status = "active"
-//	query.Where("age", ">", 18)      // age > 18
-//	query.Where("name", "like", "张%")  // name LIKE "张%"
-func (q *Query[T]) Where(field string, args ...interface{}) *Query[T] {
-	if len(args) == 0 {
-		return q
-	}
-
-	var op string
-	var value interface{}
-
-	if len(args) == 1 {
-		// Where("field", value) - 等于
-		op = "$eq"
-		value = args[0]
-	} else {
-		// Where("field", "op", value) - 带操作符
-		opStr, ok := args[0].(string)
-		if !ok {
-			return q
-		}
-		op = ParseOperator(opStr)
-		value = NormalizeValue(args[1])
-	}
-
-	// 特殊处理等于操作符
-	if op == "$eq" {
-		q.filter[field] = NormalizeValue(value)
-	} else {
-		// 其他操作符
-		if existing, ok := q.filter[field].(M); ok {
-			existing[op] = value
-		} else {
-			q.filter[field] = M{op: value}
-		}
-	}
-
+// Eq 等于
+func (q *Query[T]) Eq(field string, value interface{}) *Query[T] {
+	q.mergeFilter(field, value)
 	return q
 }
 
-// WhereIf 条件查询（仅当 condition 为 true 时才添加条件）
-//
-// 用于根据业务逻辑动态构建查询条件，避免繁琐的 if-else 分支
-//
-// 示例：
-//
-//	query.WhereIf(keyword != "", "name", keyword)              // 仅当关键词不为空时搜索
-//	query.WhereIf(minAge > 0, "age", ">=", minAge)            // 仅当最小年龄大于0时过滤
-//	query.WhereIf(hasStatus, "status", status)                 // 仅当状态存在时过滤
-//	query.WhereIf(needActive, "is_active", true)               // 仅当需要活跃用户时过滤
-func (q *Query[T]) WhereIf(condition bool, field string, args ...interface{}) *Query[T] {
-	if !condition {
-		return q
-	}
-	return q.Where(field, args...)
+// Gt 大于
+func (q *Query[T]) Gt(field string, value interface{}) *Query[T] {
+	return q.addOp(field, "$gt", value)
 }
 
-// Filter 使用复杂过滤条件
+// Lt 小于
+func (q *Query[T]) Lt(field string, value interface{}) *Query[T] {
+	return q.addOp(field, "$lt", value)
+}
+
+// Gte 大于等于
+func (q *Query[T]) Gte(field string, value interface{}) *Query[T] {
+	return q.addOp(field, "$gte", value)
+}
+
+// Lte 小于等于
+func (q *Query[T]) Lte(field string, value interface{}) *Query[T] {
+	return q.addOp(field, "$lte", value)
+}
+
+// Ne 不等于
+func (q *Query[T]) Ne(field string, value interface{}) *Query[T] {
+	return q.addOp(field, "$ne", value)
+}
+
+// In 包含
+func (q *Query[T]) In(field string, values ...interface{}) *Query[T] {
+	// 如果 values 只有一个且是切片，则展开
+	if len(values) == 1 {
+		// 这里简化处理，直接传
+	}
+	return q.addOp(field, "$in", values)
+}
+
+// Nin 不包含
+func (q *Query[T]) Nin(field string, values ...interface{}) *Query[T] {
+	return q.addOp(field, "$nin", values)
+}
+
+// Regex 正则匹配
+func (q *Query[T]) Regex(field string, pattern string, options ...string) *Query[T] {
+	opts := ""
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	q.filter[field] = M{"$regex": pattern, "$options": opts}
+	return q
+}
+
+func (q *Query[T]) addOp(field, op string, value interface{}) *Query[T] {
+	q.mergeFilter(field, M{op: NormalizeValue(value)})
+	return q
+}
+
+// Where 使用复杂过滤条件（支持智能合并）
 //
 // 示例：
 //
-//	query.Filter(mgo.And(
-//	    mgo.Eq("status", "active"),
-//	    mgo.Gt("age", 18),
-//	))
-func (q *Query[T]) Filter(filter M) *Query[T] {
+//	q.Where(mgo.M{"age": mgo.M{"$gt": 18}})
+func (q *Query[T]) Where(filter M) *Query[T] {
 	for k, v := range filter {
-		q.filter[k] = v
+		q.mergeFilter(k, v)
 	}
 	return q
 }
 
-// FilterIf 条件过滤（仅当 condition 为 true 时才应用过滤器）
-//
-// 用于根据业务逻辑动态应用复杂过滤条件
-//
-// 示例：
-//
-//	query.FilterIf(needComplex, mgo.And(
-//	    mgo.Eq("status", "active"),
-//	    mgo.Gt("age", 18),
-//	))
-func (q *Query[T]) FilterIf(condition bool, filter M) *Query[T] {
-	if !condition {
-		return q
+// mergeFilter 合并单个字段的过滤条件
+func (q *Query[T]) mergeFilter(field string, value interface{}) {
+	// 1. 如果该字段不存在，直接赋值
+	oldVal, exists := q.filter[field]
+	if !exists {
+		q.filter[field] = NormalizeValue(value)
+		return
 	}
-	return q.Filter(filter)
+
+	// 2. 尝试将旧值和新值都标准化为 Map 形式以便合并
+	oldMap, oldIsMap := oldVal.(M)
+	if !oldIsMap {
+		// 旧值是直接值 (Eq)，转换为 $eq Map
+		oldMap = M{"$eq": oldVal}
+	}
+
+	newMap, newIsMap := value.(M)
+	if !newIsMap {
+		// 新值是直接值 (Eq)，转换为 $eq Map
+		newMap = M{"$eq": NormalizeValue(value)}
+	}
+
+	// 3. 合并 Map
+	for op, v := range newMap {
+		oldMap[op] = v // 这里依然是覆盖同名操作符，但保留了不同操作符
+	}
+
+	q.filter[field] = oldMap
 }
 
 // ID 按 ID 查询
-//
-// 示例：
-//
-//	user, err := users.Find().ID(id).One()
 func (q *Query[T]) ID(id interface{}) *Query[T] {
 	q.filter["_id"] = id
 	return q
 }
 
 // IDs 按多个 ID 查询
-//
-// 示例：
-//
-//	users, err := users.Find().IDs(id1, id2, id3).All()
 func (q *Query[T]) IDs(ids ...interface{}) *Query[T] {
 	q.filter["_id"] = M{"$in": ids}
 	return q
@@ -165,10 +183,6 @@ func (q *Query[T]) IDs(ids ...interface{}) *Query[T] {
 // ==================== 排序方法 ====================
 
 // OrderBy 排序（默认降序）
-//
-// 示例：
-//
-//	query.OrderBy("created_at")  // 降序
 func (q *Query[T]) OrderBy(field string) *Query[T] {
 	q.sort = removeField(q.sort, field)
 	q.sort = append(q.sort, E{Key: field, Value: -1})
@@ -176,10 +190,6 @@ func (q *Query[T]) OrderBy(field string) *Query[T] {
 }
 
 // Asc 升序排序
-//
-// 示例：
-//
-//	query.Asc("age")
 func (q *Query[T]) Asc(fields ...string) *Query[T] {
 	for _, field := range fields {
 		q.sort = removeField(q.sort, field)
@@ -189,10 +199,6 @@ func (q *Query[T]) Asc(fields ...string) *Query[T] {
 }
 
 // Desc 降序排序
-//
-// 示例：
-//
-//	query.Desc("created_at", "updated_at")
 func (q *Query[T]) Desc(fields ...string) *Query[T] {
 	for _, field := range fields {
 		q.sort = removeField(q.sort, field)
@@ -202,10 +208,6 @@ func (q *Query[T]) Desc(fields ...string) *Query[T] {
 }
 
 // Sort 自定义排序
-//
-// 示例：
-//
-//	query.Sort(mgo.D{{Key: "age", Value: 1}, {Key: "created_at", Value: -1}})
 func (q *Query[T]) Sort(sort D) *Query[T] {
 	for _, elem := range sort {
 		q.sort = removeField(q.sort, elem.Key)
@@ -217,41 +219,20 @@ func (q *Query[T]) Sort(sort D) *Query[T] {
 // ==================== 分页方法 ====================
 
 // Skip 跳过指定数量
-//
-// 示例：
-//
-//	query.Skip(20)
 func (q *Query[T]) Skip(n int64) *Query[T] {
 	q.skip = &n
 	return q
 }
 
 // Limit 限制数量
-//
-// 示例：
-//
-//	query.Limit(10)
 func (q *Query[T]) Limit(n int64) *Query[T] {
 	q.limit = &n
 	return q
 }
 
-// Offset Offset 是 Skip 的别名
-//
-// 示例：
-//
-//	query.Offset(20)
-func (q *Query[T]) Offset(n int64) *Query[T] {
-	return q.Skip(n)
-}
-
 // ==================== 字段选择方法 ====================
 
 // Select 选择要返回的字段
-//
-// 示例：
-//
-//	query.Select("name", "email")
 func (q *Query[T]) Select(fields ...string) *Query[T] {
 	if q.projection == nil {
 		q.projection = M{}
@@ -263,10 +244,6 @@ func (q *Query[T]) Select(fields ...string) *Query[T] {
 }
 
 // Omit 排除指定字段
-//
-// 示例：
-//
-//	query.Omit("password", "secret")
 func (q *Query[T]) Omit(fields ...string) *Query[T] {
 	if q.omit == nil {
 		q.omit = M{}
@@ -277,31 +254,9 @@ func (q *Query[T]) Omit(fields ...string) *Query[T] {
 	return q
 }
 
-// ==================== 上下文方法 ====================
-
-// Ctx 设置查询上下文
-//
-// 示例：
-//
-//	ctx := context.WithTimeout(context.Background(), 5*time.Second)
-//	query.Ctx(ctx).All()
-func (q *Query[T]) Ctx(ctx context.Context) *Query[T] {
-	q.ctx = ctx
-	return q
-}
-
-// Context 获取查询上下文
-func (q *Query[T]) Context() context.Context {
-	return getContext(q.ctx)
-}
-
 // ==================== 软删除相关方法 ====================
 
 // WithTrashed 包含已删除的记录
-//
-// 示例：
-//
-//	query.WithTrashed().All()
 func (q *Query[T]) WithTrashed() *Query[T] {
 	q.withTrashed = true
 	q.onlyTrashed = false
@@ -309,10 +264,6 @@ func (q *Query[T]) WithTrashed() *Query[T] {
 }
 
 // OnlyTrashed 只查询已删除的记录
-//
-// 示例：
-//
-//	query.OnlyTrashed().All()
 func (q *Query[T]) OnlyTrashed() *Query[T] {
 	q.onlyTrashed = true
 	q.withTrashed = false
@@ -391,23 +342,46 @@ func (q *Query[T]) buildOptions() *options.FindOptionsBuilder {
 	return opts
 }
 
+// buildFindOneOptions 构建单条查询选项
+func (q *Query[T]) buildFindOneOptions() *options.FindOneOptionsBuilder {
+	opts := options.FindOne()
+
+	if len(q.sort) > 0 {
+		opts.SetSort(q.sort)
+	}
+
+	if q.skip != nil {
+		opts.SetSkip(*q.skip)
+	}
+
+	// 构建投影
+	projection := M{}
+	if len(q.projection) > 0 {
+		projection = q.projection
+	}
+	if len(q.omit) > 0 {
+		for k, v := range q.omit {
+			projection[k] = v
+		}
+	}
+	if len(projection) > 0 {
+		opts.SetProjection(projection)
+	}
+
+	return opts
+}
+
 // ==================== 克隆方法 ====================
 
 // Clone 克隆查询构建器
-//
-// 示例：
-//
-//	baseQuery := users.Find().Where("status", "active")
-//	query1 := baseQuery.Clone().Where("age", ">", 18)
-//	query2 := baseQuery.Clone().Where("city", "北京")
 func (q *Query[T]) Clone() *Query[T] {
 	cloned := &Query[T]{
 		coll:        q.coll,
 		filter:      CopyMap(q.filter),
 		sort:        append(D{}, q.sort...),
-		ctx:         q.ctx,
 		withTrashed: q.withTrashed,
 		onlyTrashed: q.onlyTrashed,
+		err:         q.err,
 	}
 
 	if q.skip != nil {

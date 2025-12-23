@@ -1,6 +1,8 @@
 package agg
 
-import "github.com/gocrud/mgo"
+import (
+	"github.com/gocrud/mgo"
+)
 
 // ==================== 聚合操作符 ====================
 
@@ -46,7 +48,7 @@ func Divide(expr1, expr2 string) mgo.M {
 //
 //	expr := agg.Mod("$age", 10)
 func Mod(expr string, divisor int) mgo.M {
-	return mgo.M{"$mod": []interface{}{expr, divisor}}
+	return mgo.M{"$mod": []any{expr, divisor}}
 }
 
 // ==================== 字符串操作符 ====================
@@ -66,7 +68,7 @@ func Concat(exprs ...string) mgo.M {
 //
 //	expr := agg.Substr("$name", 0, 5)
 func Substr(expr string, start, length int) mgo.M {
-	return mgo.M{"$substr": []interface{}{expr, start, length}}
+	return mgo.M{"$substr": []any{expr, start, length}}
 }
 
 // ToLower 转小写
@@ -104,7 +106,7 @@ func Size(expr string) mgo.M {
 //
 //	expr := agg.ArrayElemAt("$tags", 0)
 func ArrayElemAt(expr string, index int) mgo.M {
-	return mgo.M{"$arrayElemAt": []interface{}{expr, index}}
+	return mgo.M{"$arrayElemAt": []any{expr, index}}
 }
 
 // Slice 数组切片
@@ -113,7 +115,7 @@ func ArrayElemAt(expr string, index int) mgo.M {
 //
 //	expr := agg.Slice("$tags", 0, 5)
 func Slice(expr string, start, length int) mgo.M {
-	return mgo.M{"$slice": []interface{}{expr, start, length}}
+	return mgo.M{"$slice": []any{expr, start, length}}
 }
 
 // Filter 过滤数组
@@ -146,8 +148,8 @@ func Map(input, as, in string) mgo.M {
 //
 // 示例：
 //
-//	expr := agg.Reduce("$items", 0, mgo.M{"$add": []string{"$$value", "$$this.price"}})
-func Reduce(input string, initialValue interface{}, in mgo.M) mgo.M {
+//	expr := agg.Reduce("$items", 0, mgo.M{"$add": []any{"$$value", "$$this.price"}})
+func Reduce(input string, initialValue any, in mgo.M) mgo.M {
 	return mgo.M{"$reduce": mgo.M{
 		"input":        input,
 		"initialValue": initialValue,
@@ -162,8 +164,8 @@ func Reduce(input string, initialValue interface{}, in mgo.M) mgo.M {
 // 示例：
 //
 //	expr := agg.Cond(mgo.M{"$gt": []string{"$age", 18}}, "adult", "minor")
-func Cond(condition mgo.M, ifTrue, ifFalse interface{}) mgo.M {
-	return mgo.M{"$cond": []interface{}{condition, ifTrue, ifFalse}}
+func Cond(condition mgo.M, ifTrue, ifFalse any) mgo.M {
+	return mgo.M{"$cond": []any{condition, ifTrue, ifFalse}}
 }
 
 // IfNull 如果为 null 则返回默认值
@@ -171,8 +173,8 @@ func Cond(condition mgo.M, ifTrue, ifFalse interface{}) mgo.M {
 // 示例：
 //
 //	expr := agg.IfNull("$email", "no-email")
-func IfNull(expr string, replacement interface{}) mgo.M {
-	return mgo.M{"$ifNull": []interface{}{expr, replacement}}
+func IfNull(expr string, replacement any) mgo.M {
+	return mgo.M{"$ifNull": []any{expr, replacement}}
 }
 
 // Switch 多条件分支
@@ -186,7 +188,7 @@ func IfNull(expr string, replacement interface{}) mgo.M {
 //	    },
 //	    0,  // default
 //	)
-func Switch(branches []mgo.M, defaultValue interface{}) mgo.M {
+func Switch(branches []mgo.M, defaultValue any) mgo.M {
 	return mgo.M{"$switch": mgo.M{
 		"branches": branches,
 		"default":  defaultValue,
@@ -200,8 +202,9 @@ func Switch(branches []mgo.M, defaultValue interface{}) mgo.M {
 // 示例：
 //
 //	expr := agg.Eq("$status", "active")
-func Eq(expr1, expr2 string) mgo.M {
-	return mgo.M{"$eq": []string{expr1, expr2}}
+//	expr := agg.Eq("$count", 10)
+func Eq(expr1, expr2 any) mgo.M {
+	return mgo.M{"$eq": []any{expr1, expr2}}
 }
 
 // Ne 不等于比较
@@ -209,44 +212,44 @@ func Eq(expr1, expr2 string) mgo.M {
 // 示例：
 //
 //	expr := agg.Ne("$status", "deleted")
-func Ne(expr1, expr2 string) mgo.M {
-	return mgo.M{"$ne": []string{expr1, expr2}}
+func Ne(expr1, expr2 any) mgo.M {
+	return mgo.M{"$ne": []any{expr1, expr2}}
 }
 
 // Gt 大于比较
 //
 // 示例：
 //
-//	expr := agg.Gt("$age", "18")
-func Gt(expr1, expr2 string) mgo.M {
-	return mgo.M{"$gt": []string{expr1, expr2}}
+//	expr := agg.Gt("$age", 18)
+func Gt(expr1, expr2 any) mgo.M {
+	return mgo.M{"$gt": []any{expr1, expr2}}
 }
 
 // Gte 大于等于比较
 //
 // 示例：
 //
-//	expr := agg.Gte("$age", "18")
-func Gte(expr1, expr2 string) mgo.M {
-	return mgo.M{"$gte": []string{expr1, expr2}}
+//	expr := agg.Gte("$age", 18)
+func Gte(expr1, expr2 any) mgo.M {
+	return mgo.M{"$gte": []any{expr1, expr2}}
 }
 
 // Lt 小于比较
 //
 // 示例：
 //
-//	expr := agg.Lt("$age", "60")
-func Lt(expr1, expr2 string) mgo.M {
-	return mgo.M{"$lt": []string{expr1, expr2}}
+//	expr := agg.Lt("$age", 60)
+func Lt(expr1, expr2 any) mgo.M {
+	return mgo.M{"$lt": []any{expr1, expr2}}
 }
 
 // Lte 小于等于比较
 //
 // 示例：
 //
-//	expr := agg.Lte("$age", "60")
-func Lte(expr1, expr2 string) mgo.M {
-	return mgo.M{"$lte": []string{expr1, expr2}}
+//	expr := agg.Lte("$age", 60)
+func Lte(expr1, expr2 any) mgo.M {
+	return mgo.M{"$lte": []any{expr1, expr2}}
 }
 
 // ==================== 逻辑操作符 ====================

@@ -42,7 +42,7 @@ type Namer interface {
 //
 //	// 强制覆盖为 "app_users"
 //	users := mgo.Model[User](db, "app_users")
-func Model[T Namer](source interface{}, collectionName ...string) *TypedCollection[T] {
+func Model[T Namer](source interface{}, collectionName ...string) *Collection[T] {
 	var name string
 
 	// 确定集合名
@@ -55,16 +55,19 @@ func Model[T Namer](source interface{}, collectionName ...string) *TypedCollecti
 		name = zero.CollName()
 	}
 
-	// 根据 source 类型创建 TypedCollection
+	// 根据 source 类型创建 Collection
 	switch src := source.(type) {
 	case *Database:
-		return newTypedCollection[T](src, src.db.Collection(name))
+		return newCollection[T](src, src.db.Collection(name))
 	case *Session:
 		db := src.Database()
-		return newTypedCollection[T](db, db.db.Collection(name))
-	case *Collection:
-		return newTypedCollection[T](src.db, src.coll)
+		return newCollection[T](db, db.db.Collection(name))
 	default:
+		// 尝试获取 Database
+		if dbGetter, ok := src.(interface{ Database() *Database }); ok {
+			db := dbGetter.Database()
+			return newCollection[T](db, db.db.Collection(name))
+		}
 		panic("mgo: invalid source type for Model")
 	}
 }

@@ -1,15 +1,16 @@
-# MGO - 极致 DX 的 MongoDB Go 库
+# mgo - 泛型 MongoDB Go 客户端
 
-一个专注于开发者体验(DX)的 MongoDB Go 库，提供类型安全、零样板代码的 API。
+`mgo` 是一个基于 Go 泛型的 MongoDB 客户端封装，旨在提供类型安全、简洁且功能强大的数据库操作体验。它在官方 `mongo-driver` 的基础上进行了封装，简化了常见的 CRUD 操作，并提供了聚合、事务、批量处理等高级功能。
 
-## ✨ 核心特性
+## ✨ 特性
 
-- 🎯 **零样板代码** - Context 自动管理，时间戳自动填充
-- 🔒 **类型安全** - 泛型支持，编译时类型检查  
-- ⚡ **极简 API** - 常见操作 1-2 行代码
-- 🌍 **智能时区** - 查询时自动转换 UTC
-- 📦 **渐进式** - 简单场景简单用法，复杂场景功能强大
-- 🚀 **性能优化** - 批量操作、流式处理、自动分批
+- **泛型支持**：完全基于 Go 1.18+ 泛型，提供类型安全的 CRUD 操作。
+- **链式调用**：流畅的查询构建器 API，支持复杂的过滤、排序和分页。
+- **自动化钩子**：内置 `Created` / `Updated` 时间戳自动管理和软删除支持。
+- **高级聚合**：提供类型安全的聚合管道构建器 (`agg` 包)。
+- **事务管理**：简化事务操作，支持自动回滚和重试 (`tx` 包)。
+- **批量处理**：高效的批量插入和流式处理 (`batch` 包)。
+- **上下文集成**：原生支持 `context.Context`，便于超时控制和链路追踪。
 
 ## 📦 安装
 
@@ -19,325 +20,233 @@ go get github.com/gocrud/mgo
 
 ## 🚀 快速开始
 
-### 1. 连接数据库
+### 1. 定义模型
+
+模型结构体需要实现 `mgo.Namer` 接口来指定集合名称。
 
 ```go
 package main
 
-import "github.com/gocrud/mgo"
+import (
+	"time"
+	"github.com/gocrud/mgo"
+)
 
-// 最简单的方式
-db := mgo.MustOpen("mongodb://localhost/myapp")
-defer db.Close()
-
-// 带错误处理
-db, err := mgo.Open("mongodb://localhost/myapp")
-if err != nil {
-    log.Fatal(err)
-}
-defer db.Close()
-```
-
-### 2. 定义模型
-
-```go
 type User struct {
-    ID        mgo.ObjectID `bson:"_id,omitempty"`
-    Name      string       `bson:"name"`
-    Email     string       `bson:"email"`
-    Age       int          `bson:"age"`
-    Status    string       `bson:"status"`
-    CreatedAt time.Time    `bson:"created_at"`
-    UpdatedAt time.Time    `bson:"updated_at"`
+	ID        mgo.ObjectID `bson:"_id,omitempty"`
+	Name      string       `bson:"name"`
+	Email     string       `bson:"email"`
+	Age       int          `bson:"age"`
+	CreatedAt time.Time    `bson:"created_at"`
+	UpdatedAt time.Time    `bson:"updated_at"`
+}
+
+// 实现 mgo.Namer 接口
+func (User) CollName() string {
+	return "users"
 }
 ```
 
-### 3. 获取集合
-
-#### TypedCollection（泛型方式 - 推荐）
+### 2. 连接与基本操作
 
 ```go
-// 自动推断集合名为 "users"
+func main() {
+	// 1. 连接数据库
+	db := mgo.MustOpen("mongodb://localhost/mgo_demo")
+	
+	// 2. 获取泛型集合 (启用自动时间戳)
+	users := mgo.Model[User](db).WithTimestamps()
+
+	// 3. 插入数据
+	user := &User{
+		Name:  "张三",
+		Email: "zhangsan@example.com",
+		Age:   25,
+	}
+	id, _ := users.Insert(user)
+
+	// 4. 查询数据
+	// 根据 ID 查询
+	foundUser, _ := users.FindByID(id)
+	
+	// 链式查询
+	activeUsers, _ := users.Find().
+		Eq("age", 25).
+		Limit(10).
+		All()
+
+	// 5. 更新数据
+	users.Find().ID(id).Set("age", 26).Update()
+
+	// 6. 删除数据
+	users.Find().ID(id).Delete()
+}
+```
+
+## 📖 详细文档
+
+### 连接数据库
+
+`mgo` 提供了多种连接方式：
+
+```go
+// 方式一：MustOpen (连接失败会 panic，适合初始化)
+db := mgo.MustOpen("mongodb://localhost/mydb")
+
+// 方式二：Open (返回 error)
+db, err := mgo.Open("mongodb://localhost/mydb")
+
+// 方式三：OpenClient (获取 Client 实例，用于跨库操作)
+client, err := mgo.OpenClient("mongodb://localhost")
+db := client.Database("mydb")
+
+// 配置选项
+db, err := mgo.Open("mongodb://localhost/mydb", 
+    mgo.MaxPoolSize(100),
+    mgo.Timeout(10*time.Second),
+)
+```
+
+### 模型定义与选项
+
+使用 `mgo.Model[T](db)` 获取集合操作对象。
+
+```go
+// 基础用法
 users := mgo.Model[User](db)
 
-// 启用自动时间戳
+// 启用自动时间戳 (默认字段: created_at, updated_at)
 users := mgo.Model[User](db).WithTimestamps()
 
-// 启用软删除
+// 自定义时间戳字段
+users := mgo.Model[User](db).WithTimestamps("create_time", "update_time")
+
+// 启用软删除 (默认字段: deleted_at)
 users := mgo.Model[User](db).WithSoftDelete()
 ```
 
-#### Collection（传统方式 - 现已支持链式查询）
+### 查询 (Query)
+
+`mgo` 提供了丰富的链式查询方法。
+
+#### 基础查询
 
 ```go
-// 获取集合
-coll := db.Collection("users")
+// 查询单条
+user, err := users.Find().Eq("name", "张三").One()
 
-// 方式1: 传统直接查询（向后兼容）
-var users []User
-err := coll.Find(mgo.M{"status": "active"}, &users)
+// 查询列表
+list, err := users.Find().Gt("age", 18).All()
 
-// 方式2: 新增链式查询（推荐，与 TypedCollection 一致）
-var users []User
-err := coll.Query().
-    Where("status", "active").
-    Where("age", ">", 18).
-    All(&users)
+// 统计数量
+count, err := users.Find().Eq("status", "active").Count()
 ```
 
-**两种方式的选择：**
-- **TypedCollection**: 类型安全，编译时检查，返回类型明确 → 适合新项目
-- **Collection + Query()**: 灵活性高，支持动态场景 → 适合运行时确定集合名的场景
-
-详见 [Collection 链式查询文档](docs/COLLECTION_QUERY.md)
-
-### 4. 基础 CRUD
+#### 过滤条件
 
 ```go
-// 插入
-user := &User{Name: "张三", Email: "zhangsan@example.com", Age: 25}
-id, err := users.Insert(user)
+q := users.Find()
 
-// 查询
-user, err := users.FindByID(id)
+q.Eq("name", "张三")       // 等于
+q.Ne("status", "banned")   // 不等于
+q.Gt("age", 18)            // 大于
+q.Gte("age", 18)           // 大于等于
+q.Lt("age", 60)            // 小于
+q.Lte("age", 60)           // 小于等于
+q.In("role", []string{"admin", "editor"}) // 包含
+q.Regex("email", "@gmail.com$") // 正则匹配
 
-// 更新
-err = users.Find().ID(id).
-    Set("status", "inactive").
-    Inc("login_count", 1).
-    Update()
+// 复杂条件 (支持 Map 合并)
+q.Where(mgo.M{
+    "age": mgo.M{"$gt": 18},
+    "status": "active",
+})
 
-// 删除
-err = users.Find().ID(id).Delete()
+// 条件分支
+q.When(isAdult, func(q *mgo.Query[User]) {
+    q.Gt("age", 18)
+})
 ```
 
-## 📖 详细用法
-
-### 查询
+#### 分页与排序
 
 ```go
-// 基础查询
-results, err := users.Find().
-    Where("status", "active").      // 等于
-    Where("age", ">", 18).          // 大于
-    Where("city", "in", []string{"北京", "上海"}).
-    OrderBy("created_at").          // 降序
-    Limit(10).
-    All()
+// 排序 (字段名前加 - 表示降序)
+users.Find().Sort("-created_at", "name").All()
 
-// 复杂条件
-results, err := users.Find().
-    Filter(
-        mgo.And(
-            mgo.Eq("status", "active"),
-            mgo.Gt("age", 18),
-            mgo.Or(
-                mgo.Eq("vip", true),
-                mgo.Gte("score", 90),
-            ),
-        ),
-    ).
-    All()
+// 分页
+users.Find().Skip(10).Limit(20).All()
 
-// 单条查询
-user, err := users.Find().
-    Where("email", email).
-    One()
-
-// 便捷方法
-user := query.OneOrNil()           // 未找到返回 nil
-users := query.AllOrEmpty()         // 失败返回空切片
-user := query.MustOne()            // panic on error
+// 分页列表 (返回分页信息)
+page, err := users.Find().PageList(1, 20)
+fmt.Printf("总数: %d, 总页数: %d\n", page.Total, page.TotalPages)
 ```
 
-### 时间查询
+### 更新 (Update)
 
 ```go
-// 自动 UTC 转换
-results, err := users.Find().
-    Where("created_at", ">=", startTime).  // 自动转 UTC
-    All()
-
-// 专门的时间查询方法
-results, err := users.Find().
-    WhereToday("created_at").
-    All()
-
-results, err := users.Find().
-    WhereThisMonth("created_at").
-    All()
-
-results, err := users.Find().
-    WhereDateBetween("created_at", "2024-01-01", "2024-12-31").
-    All()
-
-results, err := users.Find().
-    WhereLastDays("created_at", 7).  // 最近 7 天
-    All()
-```
-
-### 更新操作
-
-```go
-// 单字段更新
-err := users.Find().ID(id).
-    Set("status", "inactive").
-    Update()
-
-// 多字段更新
-err := users.Find().ID(id).
-    Set("status", "inactive").
-    Inc("login_count", 1).
-    Push("tags", "vip").
-    Update()
+// 更新单条
+users.Find().ID(id).Set("name", "李四").Update()
 
 // 批量更新
-n, err := users.Find().
-    Where("status", "pending").
-    Set("status", "active").
-    UpdateMany()
+users.Find().Lt("age", 18).Set("status", "minor").UpdateMany()
 
-// 部分更新（从结构体）
-err := users.Find().ID(id).
-    Patch(&User{Status: "inactive", Age: 30})
-
-// 完整替换
-err := users.Find().ID(id).
-    Replace(newUser)
+// 原子操作
+users.Find().ID(id).Inc("balance", 100).Update() // 增加
+users.Find().ID(id).Push("tags", "new_tag").Update() // 数组追加
+users.Find().ID(id).Pull("tags", "old_tag").Update() // 数组移除
 ```
 
-### 删除操作
+### 删除 (Delete)
 
 ```go
 // 删除单条
-err := users.Find().ID(id).Delete()
+users.Find().ID(id).Delete()
 
 // 批量删除
-n, err := users.Find().
-    Where("status", "expired").
-    DeleteMany()
+users.Find().Eq("status", "deleted").DeleteMany()
 
-// 软删除（如启用）
-users := mgo.Model[User](db).WithSoftDelete()
-
-err := users.Find().ID(id).Delete()        // 设置 deleted_at
-err := users.Find().ID(id).ForceDelete()   // 物理删除
-
-// 查询控制
-users.Find().All()               // 自动排除已删除
-users.Find().WithTrashed().All() // 包含已删除
-users.Find().OnlyTrashed().All() // 仅已删除
-
-// 恢复
-err := users.Find().ID(id).WithTrashed().Restore()
+// 如果启用了软删除，Delete() 会执行软删除，ForceDelete() 执行物理删除
 ```
 
-### 分页
+### 聚合 (Aggregation)
+
+使用 `agg` 子包进行聚合查询。
 
 ```go
-// 标准分页
-page, err := users.Find().
-    Where("status", "active").
-    Page(1, 20)
+import "github.com/gocrud/mgo/agg"
 
-fmt.Printf("Total: %d, Pages: %d\n", page.Total, page.Pages)
-for _, user := range page.Items {
-    fmt.Println(user.Name)
+type CityStats struct {
+    City   string  `bson:"_id"`
+    Count  int     `bson:"count"`
+    AvgAge float64 `bson:"avg_age"`
 }
 
-// 简化分页（不统计总数，性能更好）
-page, err := users.Find().SimplePageList(1, 20)
-```
-
-### 聚合
-
-```go
-// 统计
-count, err := users.Find().
-    Where("status", "active").
-    Count()
-
-// 去重
-cities, err := users.Find().
-    Where("status", "active").
-    Distinct("city")
-
-// 批量处理
-err := users.Find().Chunk(100, func(users []*User) error {
-    for _, user := range users {
-        process(user)
-    }
-    return nil
-})
-
-// 遍历
-err := users.Find().Each(func(user *User) error {
-    return process(user)
-})
-```
-
-### 类型安全字段引用
-
-```go
-// 获取字段引用
-f := users.Field()
-
-// 使用字段引用（编译时类型检查）
-results, err := users.Find().
-    Where(f.Status, "active").
-    Where(f.Age, ">", 18).
-    OrderBy(f.CreatedAt).
-    Select(f.Name, f.Email).
+results, err := agg.Aggregate[CityStats](users).
+    Match(mgo.Eq("status", "active")).
+    GroupBy("$city").
+        Count("count").
+        Avg("avg_age", "$age").
+    SortDesc("count").
     All()
 ```
 
-### 事务
+### 事务 (Transactions)
 
-**单库事务：**
+使用 `tx` 子包管理事务。
 
 ```go
-err := db.Transaction(func(sess *mgo.Session) error {
+import "github.com/gocrud/mgo/tx"
+
+err := tx.Transaction(db, func(sess *tx.Session) error {
     users := mgo.Model[User](sess)
     orders := mgo.Model[Order](sess)
     
-    if err := users.Find().ID(userID).Inc("balance", -100).Update(); err != nil {
-        return err  // 自动回滚
-    }
-    
-    if _, err := orders.Insert(order); err != nil {
-        return err  // 自动回滚
-    }
-    
-    return nil  // 自动提交
-})
-```
-
-**跨库事务：**
-
-```go
-// 创建 Client 实例（支持跨库操作）
-client, err := mgo.OpenClient("mongodb://localhost")
-if err != nil {
-    return err
-}
-defer client.Close()
-
-// 跨库事务
-err = client.Transaction(func(sess *mgo.ClientSession) error {
-    // 访问多个数据库
-    accountsDB := sess.Database("accounts")
-    logsDB := sess.Database("logs")
-    
-    users := mgo.Model[User](accountsDB)
-    logs := mgo.Model[Log](logsDB)
-    
-    // 扣减余额
-    if err := users.Find().ID(userID).Inc("balance", -amount).Update(); err != nil {
+    if err := users.Find().ID(uid).Inc("balance", -100).Update(); err != nil {
         return err
     }
     
-    // 记录日志（不同数据库）
-    if _, err := logs.Insert(&Log{Type: "transfer", Amount: amount}); err != nil {
+    if _, err := orders.Insert(newOrder); err != nil {
         return err
     }
     
@@ -345,93 +254,21 @@ err = client.Transaction(func(sess *mgo.ClientSession) error {
 })
 ```
 
-## 🎯 设计理念
+### 批量处理 (Batch)
 
-### 类型别名 - 零依赖暴露
-
-用户代码不直接出现 `go.mongodb.org/mongo-driver` 的类型：
+使用 `batch` 子包进行高效批量操作。
 
 ```go
-// ❌ 之前
-import "go.mongodb.org/mongo-driver/v2/bson"
+import "github.com/gocrud/mgo/batch"
 
-type User struct {
-    ID primitive.ObjectID `bson:"_id"`
-}
-
-// ✅ 现在
-import "github.com/gocrud/mgo"
-
-type User struct {
-    ID mgo.ObjectID `bson:"_id"`
-}
+// 自动分批插入
+err := batch.InsertBatch(users, largeUserList, batch.Size(500))
 ```
-
-### Context 自动管理
-
-99% 场景无需手动管理 Context：
-
-```go
-// 默认使用 context.Background()
-users.Find().All()
-
-// 需要时可覆盖
-users.Find().Ctx(customCtx).All()
-```
-
-### 时区智能转换
-
-查询时自动转换为 UTC，避免时区错误：
-
-```go
-// 自动转换本地时间为 UTC
-users.Find().Where("created_at", ">", localTime).All()
-
-// 专门的时间查询方法
-users.Find().WhereToday("created_at").All()
-```
-
-## 📊 性能对比
-
-与官方驱动相比：
-
-- **代码量**: 减少 50-60%
-- **开发效率**: 提升 70%
-- **类型安全**: 100% (消除字符串字段名错误)
-- **时区错误**: 减少 90% (自动转换)
-
-## 🏗️ 包结构
-
-```
-mgo/
-├── 核心文件（90% 场景使用）
-│   ├── client.go          # 客户端创建
-│   ├── database.go        # 数据库操作
-│   ├── collection.go      # 集合操作
-│   ├── model.go           # 泛型模型工厂
-│   ├── typed.go           # 泛型集合
-│   ├── query.go           # 查询构建器
-│   ├── query_time.go      # 时间查询
-│   ├── query_exec.go      # 查询执行
-│   ├── update.go          # 更新操作
-│   ├── delete.go          # 删除操作
-│   ├── filter.go          # 条件构建
-│   └── pagination.go      # 分页
-│
-└── 高级功能子包（按需导入）
-    ├── agg/               # 聚合功能
-    ├── batch/             # 批量和流式处理
-    └── tx/                # 事务管理
-```
-
-## 📝 License
-
-MIT License
 
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
----
+## 📄 许可证
 
-**注意**: 这是一个基于 MongoDB官方驱动 v2 的封装库，提供更好的开发者体验。
+MIT License

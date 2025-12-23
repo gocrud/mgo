@@ -64,7 +64,7 @@ for _, err := range stats.Errors {
 ### 1. Each 遍历
 
 ```go
-err := batch.Each(users.Find().Where("status", "active"),
+err := batch.Each(users.Find().Eq("status", "active"),
     func(user *User) error {
         return process(user)
     })

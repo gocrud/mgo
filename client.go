@@ -66,7 +66,6 @@ func Open(uri string, opts ...ClientOption) (*Database, error) {
 	return &Database{
 		client: client,
 		db:     client.Database(dbName),
-		ctx:    clientOpts.ctx,
 		name:   dbName,
 	}, nil
 }
@@ -123,7 +122,6 @@ func From(client *mongo.Client, dbName string) *Database {
 	return &Database{
 		client: client,
 		db:     client.Database(dbName),
-		ctx:    context.Background(),
 		name:   dbName,
 	}
 }
@@ -286,7 +284,6 @@ func (c *Client) Database(name string) *Database {
 	return &Database{
 		client: c.client,
 		db:     c.client.Database(name),
-		ctx:    c.ctx,
 		name:   name,
 	}
 }
@@ -369,7 +366,7 @@ func (c *Client) Native() *mongo.Client {
 //
 // 示例：
 //
-//	err := client.Transaction(func(sess *mgo.ClientSession) error {
+//	err := client.Transaction(ctx, func(sess *mgo.ClientSession) error {
 //	    // 访问多个数据库
 //	    accountsDB := sess.Database("accounts")
 //	    logsDB := sess.Database("logs")
@@ -378,7 +375,7 @@ func (c *Client) Native() *mongo.Client {
 //	    logs := mgo.Model[Log](logsDB)
 //
 //	    // 跨库操作
-//	    if err := users.Find().ID(userID).Inc("balance", -amount).Update(); err != nil {
+//	    if err := users.Find().ID(userID).Inc("balance", -amount).Update(sess.Context()); err != nil {
 //	        return err  // 自动回滚
 //	    }
 //
@@ -390,7 +387,6 @@ func (c *Client) Native() *mongo.Client {
 //	})
 func (c *Client) Transaction(fn func(*ClientSession) error) error {
 	ctx := c.Context()
-
 	// 启动会话
 	session, err := c.client.StartSession()
 	if err != nil {
