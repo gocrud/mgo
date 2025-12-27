@@ -3,294 +3,160 @@ package mgo
 // ==================== 更新操作 ====================
 
 // UpdateBuilder 更新构建器
-type UpdateBuilder struct {
+type UpdateBuilder[T any] struct {
+	coll    *Collection[T]
+	filter  any
 	updates M
 }
 
 // newUpdateBuilder 创建更新构建器
-func newUpdateBuilder() *UpdateBuilder {
-	return &UpdateBuilder{
+func newUpdateBuilder[T any](coll *Collection[T]) *UpdateBuilder[T] {
+	return &UpdateBuilder[T]{
+		coll:    coll,
+		filter:  M{},
 		updates: M{},
 	}
 }
 
-// ==================== 更新方法（Query）====================
+// Where 设置更新条件
+func (b *UpdateBuilder[T]) Where(filter any) *UpdateBuilder[T] {
+	b.filter = filter
+	return b
+}
 
 // Set 设置字段值
-func (q *Query[T]) Set(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Set(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$set"]; !ok {
+		b.updates["$set"] = M{}
 	}
-
-	// 将更新操作存储在 filter 的特殊键中
-	if _, ok := q.filter["$set"]; !ok {
-		q.filter["$set"] = M{}
-	}
-	q.filter["$set"].(M)[field] = NormalizeValue(value)
-	return q
+	b.updates["$set"].(M)[field] = NormalizeValue(value)
+	return b
 }
 
 // Inc 增加字段值
-func (q *Query[T]) Inc(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Inc(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$inc"]; !ok {
+		b.updates["$inc"] = M{}
 	}
-
-	if _, ok := q.filter["$inc"]; !ok {
-		q.filter["$inc"] = M{}
-	}
-	q.filter["$inc"].(M)[field] = value
-	return q
+	b.updates["$inc"].(M)[field] = value
+	return b
 }
 
 // Mul 乘以字段值
-func (q *Query[T]) Mul(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Mul(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$mul"]; !ok {
+		b.updates["$mul"] = M{}
 	}
-
-	if _, ok := q.filter["$mul"]; !ok {
-		q.filter["$mul"] = M{}
-	}
-	q.filter["$mul"].(M)[field] = value
-	return q
+	b.updates["$mul"].(M)[field] = value
+	return b
 }
 
 // SetMin 设置字段最小值
-func (q *Query[T]) SetMin(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) SetMin(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$min"]; !ok {
+		b.updates["$min"] = M{}
 	}
-
-	if _, ok := q.filter["$min"]; !ok {
-		q.filter["$min"] = M{}
-	}
-	q.filter["$min"].(M)[field] = value
-	return q
+	b.updates["$min"].(M)[field] = value
+	return b
 }
 
 // SetMax 设置字段最大值
-func (q *Query[T]) SetMax(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) SetMax(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$max"]; !ok {
+		b.updates["$max"] = M{}
 	}
-
-	if _, ok := q.filter["$max"]; !ok {
-		q.filter["$max"] = M{}
-	}
-	q.filter["$max"].(M)[field] = value
-	return q
+	b.updates["$max"].(M)[field] = value
+	return b
 }
 
 // Unset 删除字段
-func (q *Query[T]) Unset(fields ...string) *Query[T] {
-	if q.coll == nil {
-		return q
-	}
-
-	if _, ok := q.filter["$unset"]; !ok {
-		q.filter["$unset"] = M{}
+func (b *UpdateBuilder[T]) Unset(fields ...string) *UpdateBuilder[T] {
+	if _, ok := b.updates["$unset"]; !ok {
+		b.updates["$unset"] = M{}
 	}
 	for _, field := range fields {
-		q.filter["$unset"].(M)[field] = ""
+		b.updates["$unset"].(M)[field] = ""
 	}
-	return q
+	return b
 }
 
 // Rename 重命名字段
-func (q *Query[T]) Rename(oldField, newField string) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Rename(oldField, newField string) *UpdateBuilder[T] {
+	if _, ok := b.updates["$rename"]; !ok {
+		b.updates["$rename"] = M{}
 	}
-
-	if _, ok := q.filter["$rename"]; !ok {
-		q.filter["$rename"] = M{}
-	}
-	q.filter["$rename"].(M)[oldField] = newField
-	return q
+	b.updates["$rename"].(M)[oldField] = newField
+	return b
 }
 
-// ==================== 数组更新操作 ====================
-
 // Push 向数组添加元素
-func (q *Query[T]) Push(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Push(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$push"]; !ok {
+		b.updates["$push"] = M{}
 	}
-
-	if _, ok := q.filter["$push"]; !ok {
-		q.filter["$push"] = M{}
-	}
-	q.filter["$push"].(M)[field] = value
-	return q
+	b.updates["$push"].(M)[field] = value
+	return b
 }
 
 // PushAll 向数组添加多个元素
-func (q *Query[T]) PushAll(field string, values []interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) PushAll(field string, values []interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$push"]; !ok {
+		b.updates["$push"] = M{}
 	}
-
-	if _, ok := q.filter["$push"]; !ok {
-		q.filter["$push"] = M{}
-	}
-	q.filter["$push"].(M)[field] = M{"$each": values}
-	return q
+	b.updates["$push"].(M)[field] = M{"$each": values}
+	return b
 }
 
 // Pull 从数组删除元素
-func (q *Query[T]) Pull(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Pull(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$pull"]; !ok {
+		b.updates["$pull"] = M{}
 	}
-
-	if _, ok := q.filter["$pull"]; !ok {
-		q.filter["$pull"] = M{}
-	}
-	q.filter["$pull"].(M)[field] = value
-	return q
+	b.updates["$pull"].(M)[field] = value
+	return b
 }
 
 // PullAll 从数组删除多个元素
-func (q *Query[T]) PullAll(field string, values []interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) PullAll(field string, values []interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$pullAll"]; !ok {
+		b.updates["$pullAll"] = M{}
 	}
-
-	if _, ok := q.filter["$pullAll"]; !ok {
-		q.filter["$pullAll"] = M{}
-	}
-	q.filter["$pullAll"].(M)[field] = values
-	return q
+	b.updates["$pullAll"].(M)[field] = values
+	return b
 }
 
 // AddToSet 向数组添加元素（去重）
-func (q *Query[T]) AddToSet(field string, value interface{}) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) AddToSet(field string, value interface{}) *UpdateBuilder[T] {
+	if _, ok := b.updates["$addToSet"]; !ok {
+		b.updates["$addToSet"] = M{}
 	}
-
-	if _, ok := q.filter["$addToSet"]; !ok {
-		q.filter["$addToSet"] = M{}
-	}
-	q.filter["$addToSet"].(M)[field] = value
-	return q
+	b.updates["$addToSet"].(M)[field] = value
+	return b
 }
 
 // Pop 从数组移除第一个或最后一个元素
-func (q *Query[T]) Pop(field string, position int) *Query[T] {
-	if q.coll == nil {
-		return q
+func (b *UpdateBuilder[T]) Pop(field string, position int) *UpdateBuilder[T] {
+	if _, ok := b.updates["$pop"]; !ok {
+		b.updates["$pop"] = M{}
 	}
-
-	if _, ok := q.filter["$pop"]; !ok {
-		q.filter["$pop"] = M{}
-	}
-	q.filter["$pop"].(M)[field] = position
-	return q
+	b.updates["$pop"].(M)[field] = position
+	return b
 }
 
-// ==================== 执行更新操作 ====================
-
-// buildUpdateDoc 构建更新文档
-func (q *Query[T]) buildUpdateDoc() M {
-	update := M{}
-
-	// 提取更新操作（不删除，因为 buildFilter 会自动排除）
-	updateOps := []string{"$set", "$inc", "$mul", "$min", "$max", "$unset", "$rename", "$push", "$pull", "$pullAll", "$addToSet", "$pop"}
-	for _, op := range updateOps {
-		if val, ok := q.filter[op]; ok {
-			update[op] = val
-		}
+// Restore 恢复软删除的文档
+func (b *UpdateBuilder[T]) Restore() error {
+	if b.coll.opts.SoftDelete == nil || !b.coll.opts.SoftDelete.Enabled {
+		return nil
 	}
-
-	// 应用时间戳
-	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-		if _, ok := update["$set"]; !ok {
-			update["$set"] = M{}
-		}
-		update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = NormalizeValue(Now())
-	}
-
-	return update
+	return b.Set(b.coll.opts.SoftDelete.Field, nil).Exec()
 }
 
-// Update 执行更新（单条）
-func (q *Query[T]) Update() error {
-	filter := q.buildFilter()
-	update := q.buildUpdateDoc()
-
-	if len(update) == 0 {
-		return ErrEmptyUpdate
-	}
-
-	_, err := q.coll.coll.UpdateOne(q.ctx, filter, update)
-	if err != nil {
-		return WrapError(err, "failed to update")
-	}
-
-	return nil
+// Exec 执行更新 (默认更新单条)
+func (b *UpdateBuilder[T]) Exec() error {
+	return b.coll.UpdateOne(b.filter, b.updates)
 }
 
 // UpdateMany 执行批量更新
-func (q *Query[T]) UpdateMany() (int64, error) {
-	filter := q.buildFilter()
-	update := q.buildUpdateDoc()
-
-	if len(update) == 0 {
-		return 0, ErrEmptyUpdate
-	}
-
-	result, err := q.coll.coll.UpdateMany(q.ctx, filter, update)
-	if err != nil {
-		return 0, WrapError(err, "failed to update many")
-	}
-
-	return result.ModifiedCount, nil
-}
-
-// Patch 部分更新（从结构体）
-func (q *Query[T]) Patch(doc *T) error {
-	// TODO: 使用反射提取非零值字段
-	// 然后调用 Set 方法
-	return q.Update()
-}
-
-// Replace 完整替换文档
-func (q *Query[T]) Replace(doc *T) error {
-	filter := q.buildFilter()
-
-	// 应用时间戳
-	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-		applyTimestamps(doc, q.coll.opts.Timestamps, false)
-	}
-
-	_, err := q.coll.coll.ReplaceOne(q.ctx, filter, doc)
-	if err != nil {
-		return WrapError(err, "failed to replace")
-	}
-
-	return nil
-}
-
-// ==================== FindAndModify 原子操作 ====================
-
-// UpdateAndReturn 更新并返回更新后的文档
-func (q *Query[T]) UpdateAndReturn() (*T, error) {
-	// TODO: 使用 FindOneAndUpdate 实现
-	return nil, nil
-}
-
-// UpdateAndReturnOld 更新并返回更新前的文档
-func (q *Query[T]) UpdateAndReturnOld() (*T, error) {
-	// TODO: 使用 FindOneAndUpdate 实现
-	return nil, nil
-}
-
-// ==================== Upsert 插入或更新 ====================
-
-// Upsert 存在则更新，不存在则插入
-func (q *Query[T]) Upsert(doc *T) error {
-	// TODO: 使用 UpdateOne 的 upsert 选项实现
-	return nil
+func (b *UpdateBuilder[T]) UpdateMany() (int64, error) {
+	return b.coll.UpdateMany(b.filter, b.updates)
 }

@@ -130,7 +130,7 @@ func (q *Query[T]) addOp(field, op string, value interface{}) *Query[T] {
 //
 // 示例：
 //
-//	q.Where(mgo.M{"age": mgo.M{"$gt": 18}})
+//	q.Where(mgo.M{"age": mgo.Gt(18), "status": "active"})
 func (q *Query[T]) Where(filter M) *Query[T] {
 	for k, v := range filter {
 		q.mergeFilter(k, v)
@@ -276,17 +276,9 @@ func (q *Query[T]) OnlyTrashed() *Query[T] {
 func (q *Query[T]) buildFilter() M {
 	filter := M{}
 
-	// 复制 filter，但排除更新操作符
-	updateOps := map[string]bool{
-		"$set": true, "$inc": true, "$mul": true, "$min": true, "$max": true,
-		"$unset": true, "$rename": true, "$push": true, "$pull": true,
-		"$pullAll": true, "$addToSet": true, "$pop": true,
-	}
-
+	// 复制 filter
 	for k, v := range q.filter {
-		if !updateOps[k] {
-			filter[k] = v
-		}
+		filter[k] = v
 	}
 
 	// 应用软删除过滤

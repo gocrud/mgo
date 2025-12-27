@@ -4,68 +4,82 @@ import (
 	"time"
 )
 
-// ==================== 删除操作 ====================
+// ==================== 删除构建器 ====================
 
-// Delete 删除单条文档
-func (q *Query[T]) Delete() error {
-	// 如果启用了软删除
-	if q.coll.opts.SoftDelete != nil && q.coll.opts.SoftDelete.Enabled {
-		return q.softDelete()
+// DeleteBuilder 删除构建器
+type DeleteBuilder[T any] struct {
+	coll    *Collection[T]
+	filter  any
+	isForce bool
+}
+
+// newDeleteBuilder 创建删除构建器
+func newDeleteBuilder[T any](coll *Collection[T]) *DeleteBuilder[T] {
+	return &DeleteBuilder[T]{
+		coll:   coll,
+		filter: M{},
+	}
+}
+
+// Where 设置删除条件
+func (b *DeleteBuilder[T]) Where(filter any) *DeleteBuilder[T] {
+	b.filter = filter
+	return b
+}
+
+// Force 强制物理删除
+func (b *DeleteBuilder[T]) Force() *DeleteBuilder[T] {
+	b.isForce = true
+	return b
+}
+
+// Exec 执行删除 (默认删除单条)
+func (b *DeleteBuilder[T]) Exec() error {
+	// 软删除逻辑
+	if !b.isForce && b.coll.opts.SoftDelete != nil && b.coll.opts.SoftDelete.Enabled {
+		update := M{
+			"$set": M{
+				b.coll.opts.SoftDelete.Field: time.Now().UTC(),
+			},
+		}
+		// 应用更新时间戳
+		if b.coll.opts.Timestamps != nil && b.coll.opts.Timestamps.Enabled {
+			update["$set"].(M)[b.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
+		}
+		_, err := b.coll.coll.UpdateOne(b.coll.ctx, b.filter, update)
+		return err
 	}
 
 	// 物理删除
-	return q.forceDelete()
+	_, err := b.coll.coll.DeleteOne(b.coll.ctx, b.filter)
+	return err
 }
 
-// DeleteMany 批量删除文档
-func (q *Query[T]) DeleteMany() (int64, error) {
-	// 如果启用了软删除
-	if q.coll.opts.SoftDelete != nil && q.coll.opts.SoftDelete.Enabled {
-		return q.softDeleteMany()
+// DeleteMany 执行批量删除
+func (b *DeleteBuilder[T]) DeleteMany() (int64, error) {
+	// 软删除逻辑
+	if !b.isForce && b.coll.opts.SoftDelete != nil && b.coll.opts.SoftDelete.Enabled {
+		update := M{
+			"$set": M{
+				b.coll.opts.SoftDelete.Field: time.Now().UTC(),
+			},
+		}
+		if b.coll.opts.Timestamps != nil && b.coll.opts.Timestamps.Enabled {
+			update["$set"].(M)[b.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
+		}
+		res, err := b.coll.coll.UpdateMany(b.coll.ctx, b.filter, update)
+		if err != nil {
+			return 0, err
+		}
+		return res.ModifiedCount, nil
 	}
 
 	// 物理删除
-	return q.forceDeleteMany()
-}
-
-// ForceDelete 物理删除（忽略软删除设置）
-func (q *Query[T]) ForceDelete() error {
-	return q.forceDelete()
-}
-
-// ForceDeleteMany 批量物理删除
-func (q *Query[T]) ForceDeleteMany() (int64, error) {
-	return q.forceDeleteMany()
-}
-
-// ==================== 软删除实现 ====================
-
-// softDelete 软删除单条
-func (q *Query[T]) softDelete() error {
-	if q.coll.opts.SoftDelete == nil || !q.coll.opts.SoftDelete.Enabled {
-		return q.forceDelete()
-	}
-
-	filter := q.buildFilter()
-
-	// 构建更新文档
-	update := M{
-		"$set": M{
-			q.coll.opts.SoftDelete.Field: time.Now().UTC(),
-		},
-	}
-
-	// 应用更新时间戳
-	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-		update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
-	}
-
-	_, err := q.coll.coll.UpdateOne(q.ctx, filter, update)
+	res, err := b.coll.coll.DeleteMany(b.coll.ctx, b.filter)
 	if err != nil {
-		return WrapError(err, "failed to soft delete")
+		return 0, err
 	}
-
-	return nil
+	return res.DeletedCount, nil
 }
 
 // softDeleteMany 批量软删除
@@ -133,99 +147,3 @@ func (q *Query[T]) forceDeleteMany() (int64, error) {
 }
 
 // ==================== 恢复软删除 ====================
-
-// Restore 恢复软删除的记录
-func (q *Query[T]) Restore() error {
-	if q.coll.opts.SoftDelete == nil || !q.coll.opts.SoftDelete.Enabled {
-		return ErrInvalidOperation
-	}
-
-	// 构建过滤条件：只恢复已删除的记录
-	filter := q.buildFilter()
-	filter[q.coll.opts.SoftDelete.Field] = M{"$ne": nil}
-
-	// 构建更新文档
-	update := M{
-		"$set": M{
-			q.coll.opts.SoftDelete.Field: nil,
-		},
-	}
-
-	// 应用更新时间戳
-	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-		update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
-	}
-
-	_, err := q.coll.coll.UpdateOne(q.ctx, filter, update)
-	if err != nil {
-		return WrapError(err, "failed to restore")
-	}
-
-	return nil
-}
-
-// RestoreMany 批量恢复软删除的记录
-func (q *Query[T]) RestoreMany() (int64, error) {
-	if q.coll.opts.SoftDelete == nil || !q.coll.opts.SoftDelete.Enabled {
-		return 0, ErrInvalidOperation
-	}
-
-	// 构建过滤条件：只恢复已删除的记录
-	filter := q.buildFilter()
-	filter[q.coll.opts.SoftDelete.Field] = M{"$ne": nil}
-
-	// 构建更新文档
-	update := M{
-		"$set": M{
-			q.coll.opts.SoftDelete.Field: nil,
-		},
-	}
-
-	// 应用更新时间戳
-	if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-		update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
-	}
-
-	result, err := q.coll.coll.UpdateMany(q.ctx, filter, update)
-	if err != nil {
-		return 0, WrapError(err, "failed to restore many")
-	}
-
-	return result.ModifiedCount, nil
-}
-
-// ==================== DeleteAndReturn 原子操作 ====================
-
-// DeleteAndReturn 删除并返回被删除的文档
-func (q *Query[T]) DeleteAndReturn() (*T, error) {
-	filter := q.buildFilter()
-
-	var result T
-
-	// 如果启用了软删除
-	if q.coll.opts.SoftDelete != nil && q.coll.opts.SoftDelete.Enabled {
-		// 软删除并返回
-		update := M{
-			"$set": M{
-				q.coll.opts.SoftDelete.Field: time.Now().UTC(),
-			},
-		}
-
-		if q.coll.opts.Timestamps != nil && q.coll.opts.Timestamps.Enabled {
-			update["$set"].(M)[q.coll.opts.Timestamps.UpdatedField] = time.Now().UTC()
-		}
-
-		err := q.coll.coll.FindOneAndUpdate(q.ctx, filter, update).Decode(&result)
-		if err != nil {
-			return nil, WrapError(err, "failed to soft delete and return")
-		}
-	} else {
-		// 物理删除并返回
-		err := q.coll.coll.FindOneAndDelete(q.ctx, filter).Decode(&result)
-		if err != nil {
-			return nil, WrapError(err, "failed to delete and return")
-		}
-	}
-
-	return &result, nil
-}

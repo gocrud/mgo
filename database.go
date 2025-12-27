@@ -52,6 +52,34 @@ func (d *Database) Native() *mongo.Database {
 	return d.db
 }
 
+// ==================== 事务支持 ====================
+
+// Tx 事务封装
+type Tx struct {
+	ctx context.Context
+}
+
+// Context 获取事务上下文
+func (t *Tx) Context() context.Context {
+	return t.ctx
+}
+
+// WithTx 执行事务
+func (d *Database) WithTx(fn func(tx *Tx) error) error {
+	session, err := d.client.StartSession()
+	if err != nil {
+		return WrapError(err, "failed to start session")
+	}
+	defer session.EndSession(d.ctx)
+
+	callback := func(sessCtx context.Context) (interface{}, error) {
+		return nil, fn(&Tx{ctx: sessCtx})
+	}
+
+	_, err = session.WithTransaction(d.ctx, callback)
+	return err
+}
+
 // Drop 删除数据库
 func (d *Database) Drop() error {
 	return d.db.Drop(d.Context())

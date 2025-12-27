@@ -6,6 +6,15 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
+// HookHandler 钩子函数类型
+type HookHandler[T any] func(ctx context.Context, doc *T) error
+
+// CollectionHooks 集合钩子
+type CollectionHooks[T any] struct {
+	BeforeInsert []HookHandler[T]
+	AfterFind    []HookHandler[T]
+}
+
 // Collection 泛型集合封装
 //
 // 提供类型安全的集合操作
@@ -15,10 +24,11 @@ import (
 //	users := mgo.Model[User](db)
 //	user, err := users.FindByID(ctx, id)
 type Collection[T any] struct {
-	coll *mongo.Collection
-	db   *Database
-	ctx  context.Context
-	opts *CollectionOptions
+	coll  *mongo.Collection
+	db    *Database
+	ctx   context.Context
+	opts  *CollectionOptions
+	hooks *CollectionHooks[T]
 }
 
 // newCollection 创建新的集合实例
@@ -29,11 +39,30 @@ func newCollection[T any](db *Database, coll *mongo.Collection, opts ...Collecti
 	}
 
 	return &Collection[T]{
-		coll: coll,
-		db:   db,
-		ctx:  context.Background(),
-		opts: options,
+		coll:  coll,
+		db:    db,
+		ctx:   context.Background(),
+		opts:  options,
+		hooks: &CollectionHooks[T]{},
 	}
+}
+
+// Hooks 获取钩子管理器
+func (c *Collection[T]) Hooks() *CollectionHooks[T] {
+	if c.hooks == nil {
+		c.hooks = &CollectionHooks[T]{}
+	}
+	return c.hooks
+}
+
+// RegisterBeforeInsert 注册插入前钩子
+func (h *CollectionHooks[T]) RegisterBeforeInsert(handler HookHandler[T]) {
+	h.BeforeInsert = append(h.BeforeInsert, handler)
+}
+
+// RegisterAfterFind 注册查询后钩子
+func (h *CollectionHooks[T]) RegisterAfterFind(handler HookHandler[T]) {
+	h.AfterFind = append(h.AfterFind, handler)
 }
 
 // WithContext 设置上下文
@@ -42,6 +71,11 @@ func (c *Collection[T]) WithContext(ctx context.Context) *Collection[T] {
 	newC := *c
 	newC.ctx = ctx
 	return &newC
+}
+
+// WithTx 使用事务上下文
+func (c *Collection[T]) WithTx(tx *Tx) *Collection[T] {
+	return c.WithContext(tx.Context())
 }
 
 // Context 获取上下文
@@ -77,23 +111,50 @@ func (c *Collection[T]) Find() *Query[T] {
 	return newQuery(c).WithContext(c.ctx)
 }
 
+// Update 创建更新构建器
+func (c *Collection[T]) Update() *UpdateBuilder[T] {
+	return newUpdateBuilder(c)
+}
+
+// Delete 创建删除构建器
+func (c *Collection[T]) Delete() *DeleteBuilder[T] {
+	return newDeleteBuilder(c)
+}
+
 // FindOne 查询单条文档
-func (c *Collection[T]) FindOne(filter interface{}) (*T, error) {
+func (c *Collection[T]) FindOne(filter any) (*T, error) {
 	var result T
 	err := c.coll.FindOne(c.ctx, filter).Decode(&result)
 	if err != nil {
 		return nil, WrapError(err, "failed to find one")
 	}
+
+	if c.hooks != nil {
+		for _, hook := range c.hooks.AfterFind {
+			if err := hook(c.ctx, &result); err != nil {
+				return nil, WrapError(err, "failed to execute AfterFind hook")
+			}
+		}
+	}
+
 	return &result, nil
 }
 
 // FindByID 根据 ID 查询文档
-func (c *Collection[T]) FindByID(id interface{}) (*T, error) {
+func (c *Collection[T]) FindByID(id any) (*T, error) {
 	return c.Find().ID(id).One()
 }
 
 // Insert 插入单条文档
 func (c *Collection[T]) Insert(doc *T) (ObjectID, error) {
+	if c.hooks != nil {
+		for _, hook := range c.hooks.BeforeInsert {
+			if err := hook(c.ctx, doc); err != nil {
+				return NilObjectID, WrapError(err, "failed to execute BeforeInsert hook")
+			}
+		}
+	}
+
 	// 应用时间戳
 	if c.opts.Timestamps != nil && c.opts.Timestamps.Enabled {
 		applyTimestamps(doc, c.opts.Timestamps, true)
@@ -146,63 +207,14 @@ func (c *Collection[T]) InsertMany(docs []*T) ([]ObjectID, error) {
 	return ids, nil
 }
 
-// UpdateOne 更新单条文档
-func (c *Collection[T]) UpdateOne(filter, update interface{}) error {
-	_, err := c.coll.UpdateOne(c.ctx, filter, update)
-	if err != nil {
-		return WrapError(err, "failed to update one")
-	}
-	return nil
-}
-
-// UpdateByID 根据 ID 更新文档
-func (c *Collection[T]) UpdateByID(id, update interface{}) error {
-	return c.UpdateOne(M{"_id": id}, update)
-}
-
-// UpdateMany 更新多条文档
-func (c *Collection[T]) UpdateMany(filter, update interface{}) (int64, error) {
-	result, err := c.coll.UpdateMany(c.ctx, filter, update)
-	if err != nil {
-		return 0, WrapError(err, "failed to update many")
-	}
-	return result.ModifiedCount, nil
-}
-
-// ReplaceOne 替换单条文档
-func (c *Collection[T]) ReplaceOne(filter interface{}, replacement *T) error {
-	_, err := c.coll.ReplaceOne(c.ctx, filter, replacement)
-	if err != nil {
-		return WrapError(err, "failed to replace one")
-	}
-	return nil
-}
-
-// DeleteOne 删除单条文档
-func (c *Collection[T]) DeleteOne(filter interface{}) error {
-	_, err := c.coll.DeleteOne(c.ctx, filter)
-	if err != nil {
-		return WrapError(err, "failed to delete one")
-	}
-	return nil
-}
-
-// DeleteByID 根据 ID 删除文档
-func (c *Collection[T]) DeleteByID(id interface{}) error {
-	return c.DeleteOne(M{"_id": id})
-}
-
-// DeleteMany 删除多条文档
-func (c *Collection[T]) DeleteMany(filter interface{}) (int64, error) {
-	result, err := c.coll.DeleteMany(c.ctx, filter)
-	if err != nil {
-		return 0, WrapError(err, "failed to delete many")
-	}
-	return result.DeletedCount, nil
-}
-
 // CountDocuments 统计文档数量
-func (c *Collection[T]) CountDocuments(filter interface{}) (int64, error) {
+func (c *Collection[T]) CountDocuments(filter any) (int64, error) {
+	count, err := c.coll.CountDocuments(c.ctx, filter)
+	if err != nil {
+		return 0, WrapError(err, "failed to count documents")
+	}
+	return count, nil
+}
 	count, err := c.coll.CountDocuments(c.ctx, filter)
 	if err != nil {
 		return 0, WrapError(err, "failed to count documents")
@@ -211,7 +223,7 @@ func (c *Collection[T]) CountDocuments(filter interface{}) (int64, error) {
 }
 
 // Distinct 获取字段的不重复值
-func (c *Collection[T]) Distinct(fieldName string, filter interface{}) ([]interface{}, error) {
+func (c *Collection[T]) Distinct(fieldName string, filter any) ([]any, error) {
 	distinctResult := c.coll.Distinct(c.ctx, fieldName, filter)
 	if distinctResult.Err() != nil {
 		return nil, WrapError(distinctResult.Err(), "failed to get distinct values")
@@ -226,7 +238,7 @@ func (c *Collection[T]) Distinct(fieldName string, filter interface{}) ([]interf
 }
 
 // Aggregate 执行聚合查询
-func (c *Collection[T]) Aggregate(pipeline interface{}, results interface{}) error {
+func (c *Collection[T]) Aggregate(pipeline any, results any) error {
 	cursor, err := c.coll.Aggregate(c.ctx, pipeline)
 	if err != nil {
 		return WrapError(err, "failed to aggregate")
@@ -301,7 +313,7 @@ func (c *Collection[T]) WithSoftDelete(fields ...string) *Collection[T] {
 }
 
 // Count 统计符合条件的文档数量
-func (c *Collection[T]) Count(filter interface{}) (int64, error) {
+func (c *Collection[T]) Count(filter any) (int64, error) {
 	return c.coll.CountDocuments(c.ctx, filter)
 }
 
