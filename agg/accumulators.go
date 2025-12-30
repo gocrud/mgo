@@ -1,124 +1,42 @@
 package agg
 
-import "github.com/gocrud/mgo"
+import "go.mongodb.org/mongo-driver/v2/bson"
 
-// ==================== 累加器函数 ====================
+type E = bson.E
+type D = bson.D
 
-// Sum 求和累加器
-//
-// 示例：
-//
-//	expr := agg.Sum("$amount")
-func Sum(expr string) mgo.M {
-	return mgo.M{"$sum": expr}
+func Count(as string) E {
+	return E{Key: as, Value: D{{Key: "$sum", Value: 1}}}
 }
 
-// Avg 平均值累加器
-//
-// 示例：
-//
-//	expr := agg.Avg("$age")
-func Avg(expr string) mgo.M {
-	return mgo.M{"$avg": expr}
+func Sum(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$sum", Value: field}}}
 }
 
-// Max 最大值累加器
-//
-// 示例：
-//
-//	expr := agg.Max("$price")
-func Max(expr string) mgo.M {
-	return mgo.M{"$max": expr}
+func Avg(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$avg", Value: field}}}
 }
 
-// Min 最小值累加器
-//
-// 示例：
-//
-//	expr := agg.Min("$price")
-func Min(expr string) mgo.M {
-	return mgo.M{"$min": expr}
+func Min(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$min", Value: field}}}
 }
 
-// First 第一个值累加器
-//
-// 示例：
-//
-//	expr := agg.First("$name")
-func First(expr string) mgo.M {
-	return mgo.M{"$first": expr}
+func Max(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$max", Value: field}}}
 }
 
-// Last 最后一个值累加器
-//
-// 示例：
-//
-//	expr := agg.Last("$name")
-func Last(expr string) mgo.M {
-	return mgo.M{"$last": expr}
+func First(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$first", Value: field}}}
 }
 
-// Push 收集到数组累加器
-//
-// 示例：
-//
-//	expr := agg.Push("$item")
-func Push(expr string) mgo.M {
-	return mgo.M{"$push": expr}
+func Last(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$last", Value: field}}}
 }
 
-// AddToSet 收集到数组累加器（去重）
-//
-// 示例：
-//
-//	expr := agg.AddToSet("$tag")
-func AddToSet(expr string) mgo.M {
-	return mgo.M{"$addToSet": expr}
+func Push(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$push", Value: field}}}
 }
 
-// StdDevPop 总体标准差
-//
-// 示例：
-//
-//	expr := agg.StdDevPop("$score")
-func StdDevPop(expr string) mgo.M {
-	return mgo.M{"$stdDevPop": expr}
-}
-
-// StdDevSamp 样本标准差
-//
-// 示例：
-//
-//	expr := agg.StdDevSamp("$score")
-func StdDevSamp(expr string) mgo.M {
-	return mgo.M{"$stdDevSamp": expr}
-}
-
-// MergeObjects 合并对象
-//
-// 示例：
-//
-//	expr := agg.MergeObjects("$profile")
-func MergeObjects(expr string) mgo.M {
-	return mgo.M{"$mergeObjects": expr}
-}
-
-// ==================== 条件累加器 ====================
-
-// CountIf 条件计数
-//
-// 示例：
-//
-//	expr := agg.CountIf(mgo.M{"$gt": []string{"$age", 18}})
-func CountIf(condition mgo.M) mgo.M {
-	return mgo.M{"$sum": mgo.M{"$cond": []interface{}{condition, 1, 0}}}
-}
-
-// SumIf 条件求和
-//
-// 示例：
-//
-//	expr := agg.SumIf(condition, "$amount")
-func SumIf(condition mgo.M, expr string) mgo.M {
-	return mgo.M{"$sum": mgo.M{"$cond": []interface{}{condition, expr, 0}}}
+func AddToSet(as, field string) E {
+	return E{Key: as, Value: D{{Key: "$addToSet", Value: field}}}
 }

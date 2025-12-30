@@ -1,162 +1,104 @@
 package mgo
 
-// ==================== 更新操作 ====================
+import (
+	"context"
+	"time"
 
-// UpdateBuilder 更新构建器
-type UpdateBuilder[T any] struct {
-	coll    *Collection[T]
-	filter  any
-	updates M
+	"go.mongodb.org/mongo-driver/v2/mongo"
+)
+
+type UpdateBuilder struct {
+	coll     *Collection
+	filter   D
+	update   D
+	ctx      context.Context
+	unscoped bool
 }
 
-// newUpdateBuilder 创建更新构建器
-func newUpdateBuilder[T any](coll *Collection[T]) *UpdateBuilder[T] {
-	return &UpdateBuilder[T]{
-		coll:    coll,
-		filter:  M{},
-		updates: M{},
+func NewUpdateBuilder(coll *Collection) *UpdateBuilder {
+	return &UpdateBuilder{
+		coll:   coll,
+		filter: D{},
+		update: D{},
+		ctx:    context.Background(),
 	}
 }
 
-// Where 设置更新条件
-func (b *UpdateBuilder[T]) Where(filter any) *UpdateBuilder[T] {
-	b.filter = filter
+func (b *UpdateBuilder) Ctx(ctx context.Context) *UpdateBuilder {
+	b.ctx = ctx
 	return b
 }
 
-// Set 设置字段值
-func (b *UpdateBuilder[T]) Set(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$set"]; !ok {
-		b.updates["$set"] = M{}
-	}
-	b.updates["$set"].(M)[field] = NormalizeValue(value)
+func (b *UpdateBuilder) Tx(ctx context.Context) *UpdateBuilder {
+	return b.Ctx(ctx)
+}
+
+func (b *UpdateBuilder) Where(filters ...E) *UpdateBuilder {
+	b.filter = append(b.filter, filters...)
 	return b
 }
 
-// Inc 增加字段值
-func (b *UpdateBuilder[T]) Inc(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$inc"]; !ok {
-		b.updates["$inc"] = M{}
-	}
-	b.updates["$inc"].(M)[field] = value
+func (b *UpdateBuilder) Set(key string, value any) *UpdateBuilder {
+	b.pushOp("$set", key, value)
 	return b
 }
 
-// Mul 乘以字段值
-func (b *UpdateBuilder[T]) Mul(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$mul"]; !ok {
-		b.updates["$mul"] = M{}
-	}
-	b.updates["$mul"].(M)[field] = value
+func (b *UpdateBuilder) Inc(key string, value any) *UpdateBuilder {
+	b.pushOp("$inc", key, value)
 	return b
 }
 
-// SetMin 设置字段最小值
-func (b *UpdateBuilder[T]) SetMin(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$min"]; !ok {
-		b.updates["$min"] = M{}
-	}
-	b.updates["$min"].(M)[field] = value
+func (b *UpdateBuilder) Push(key string, value any) *UpdateBuilder {
+	b.pushOp("$push", key, value)
 	return b
 }
 
-// SetMax 设置字段最大值
-func (b *UpdateBuilder[T]) SetMax(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$max"]; !ok {
-		b.updates["$max"] = M{}
-	}
-	b.updates["$max"].(M)[field] = value
+func (b *UpdateBuilder) Pull(key string, value any) *UpdateBuilder {
+	b.pushOp("$pull", key, value)
 	return b
 }
 
-// Unset 删除字段
-func (b *UpdateBuilder[T]) Unset(fields ...string) *UpdateBuilder[T] {
-	if _, ok := b.updates["$unset"]; !ok {
-		b.updates["$unset"] = M{}
-	}
-	for _, field := range fields {
-		b.updates["$unset"].(M)[field] = ""
-	}
+func (b *UpdateBuilder) Unscoped() *UpdateBuilder {
+	b.unscoped = true
 	return b
 }
 
-// Rename 重命名字段
-func (b *UpdateBuilder[T]) Rename(oldField, newField string) *UpdateBuilder[T] {
-	if _, ok := b.updates["$rename"]; !ok {
-		b.updates["$rename"] = M{}
-	}
-	b.updates["$rename"].(M)[oldField] = newField
+func (b *UpdateBuilder) Restore() *UpdateBuilder {
+	b.unscoped = true
+	b.Set("deleted_at", nil)
 	return b
 }
 
-// Push 向数组添加元素
-func (b *UpdateBuilder[T]) Push(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$push"]; !ok {
-		b.updates["$push"] = M{}
+func (b *UpdateBuilder) pushOp(op, key string, value any) {
+	for i := range b.update {
+		if b.update[i].Key == op {
+			if d, ok := b.update[i].Value.(D); ok {
+				b.update[i].Value = append(d, E{Key: key, Value: value})
+			}
+			return
+		}
 	}
-	b.updates["$push"].(M)[field] = value
-	return b
+	b.update = append(b.update, E{Key: op, Value: D{{Key: key, Value: value}}})
 }
 
-// PushAll 向数组添加多个元素
-func (b *UpdateBuilder[T]) PushAll(field string, values []interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$push"]; !ok {
-		b.updates["$push"] = M{}
+func (b *UpdateBuilder) buildFilter() D {
+	filter := b.filter
+	if b.coll.softDelete && !b.unscoped {
+		filter = append(filter, E{Key: "deleted_at", Value: nil})
 	}
-	b.updates["$push"].(M)[field] = M{"$each": values}
-	return b
+	return filter
 }
 
-// Pull 从数组删除元素
-func (b *UpdateBuilder[T]) Pull(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$pull"]; !ok {
-		b.updates["$pull"] = M{}
+func (b *UpdateBuilder) One() (*mongo.UpdateResult, error) {
+	if b.coll.autoTime {
+		b.Set("updated_at", time.Now())
 	}
-	b.updates["$pull"].(M)[field] = value
-	return b
+	return b.coll.UpdateOne(b.ctx, b.buildFilter(), b.update)
 }
 
-// PullAll 从数组删除多个元素
-func (b *UpdateBuilder[T]) PullAll(field string, values []interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$pullAll"]; !ok {
-		b.updates["$pullAll"] = M{}
+func (b *UpdateBuilder) Many() (*mongo.UpdateResult, error) {
+	if b.coll.autoTime {
+		b.Set("updated_at", time.Now())
 	}
-	b.updates["$pullAll"].(M)[field] = values
-	return b
-}
-
-// AddToSet 向数组添加元素（去重）
-func (b *UpdateBuilder[T]) AddToSet(field string, value interface{}) *UpdateBuilder[T] {
-	if _, ok := b.updates["$addToSet"]; !ok {
-		b.updates["$addToSet"] = M{}
-	}
-	b.updates["$addToSet"].(M)[field] = value
-	return b
-}
-
-// Pop 从数组移除第一个或最后一个元素
-func (b *UpdateBuilder[T]) Pop(field string, position int) *UpdateBuilder[T] {
-	if _, ok := b.updates["$pop"]; !ok {
-		b.updates["$pop"] = M{}
-	}
-	b.updates["$pop"].(M)[field] = position
-	return b
-}
-
-// Restore 恢复软删除的文档
-func (b *UpdateBuilder[T]) Restore() error {
-	if b.coll.opts.SoftDelete == nil || !b.coll.opts.SoftDelete.Enabled {
-		return nil
-	}
-	return b.Set(b.coll.opts.SoftDelete.Field, nil).Exec()
-}
-
-// Exec 执行更新 (默认更新单条)
-func (b *UpdateBuilder[T]) Exec() error {
-	return b.coll.UpdateOne(b.filter, b.updates)
-}
-
-// UpdateMany 执行批量更新
-func (b *UpdateBuilder[T]) UpdateMany() (int64, error) {
-	return b.coll.UpdateMany(b.filter, b.updates)
+	return b.coll.UpdateMany(b.ctx, b.buildFilter(), b.update)
 }

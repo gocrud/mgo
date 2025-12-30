@@ -1,274 +1,443 @@
-# mgo - 泛型 MongoDB Go 客户端
+# mgo: 极致 DX 的 Go MongoDB 库
 
-`mgo` 是一个基于 Go 泛型的 MongoDB 客户端封装，旨在提供类型安全、简洁且功能强大的数据库操作体验。它在官方 `mongo-driver` 的基础上进行了封装，简化了常见的 CRUD 操作，并提供了聚合、事务、批量处理等高级功能。
+`mgo` 是一个基于官方 `go.mongodb.org/mongo-driver/v2` 的轻量级封装库。它旨在提供极致的开发者体验 (DX)，通过链式调用、高性能的游标分页，让 MongoDB 的操作变得简单、类型安全且高效。
 
-## ✨ 特性
+## 核心特性 (Features)
 
-- **泛型支持**：完全基于 Go 1.18+ 泛型，提供类型安全的 CRUD 操作。
-- **链式调用**：流畅的查询构建器 API，支持复杂的过滤、排序和分页。
-- **自动化钩子**：内置 `Created` / `Updated` 时间戳自动管理和软删除支持。
-- **高级聚合**：提供类型安全的聚合管道构建器 (`agg` 包)。
-- **事务管理**：简化事务操作，支持自动回滚和重试 (`tx` 包)。
-- **批量处理**：高效的批量插入和流式处理 (`batch` 包)。
-- **上下文集成**：原生支持 `context.Context`，便于超时控制和链路追踪。
+*   **基于 Driver V2**: 充分利用官方 v2 版本的性能优化（如 `bson.D` 默认解码、更高效的连接池管理）。
+*   **链式调用 (Chainable API)**: 采用 Builder 模式，操作逻辑清晰流畅（`Find().Where().SortAsc().All()`）。
+*   **操作分离**: 独立的 `Find`, `Insert`, `Update`, `Delete` 构建器，职责单一。
+*   **高性能设计**: 底层全链路采用 `bson.D` (Slice) 而非 `bson.M` (Map)，大幅减少内存分配与 GC 压力。
+*   **高性能分页**:
+    *   **Offset Pagination**: 传统的 `Paginate(page, size)`，自动处理 Count 和 Skip。
+    *   **Cursor Pagination**: 基于 `Seek()` 的游标分页，利用索引实现海量数据的高性能无限滚动。
+*   **类型别名 (Type Aliases)**: 直接导出 `mgo.D`, `mgo.M`, `mgo.A`, `mgo.E`，无需引入 `go.mongodb.org/mongo-driver/bson`。
+*   **开发辅助**: 内置 UTC 时间转换、时间范围生成等实用工具。
 
-## 📦 安装
+## 安装 (Installation)
 
 ```bash
 go get github.com/gocrud/mgo
 ```
 
-## 🚀 快速开始
+## 快速开始 (Quick Start)
 
 ### 1. 定义模型
 
-模型结构体需要实现 `mgo.Namer` 接口来指定集合名称。
-
 ```go
-package main
-
 import (
-	"time"
-	"github.com/gocrud/mgo"
+    "time"
+    "github.com/gocrud/mgo"
 )
 
 type User struct {
-	ID        mgo.ObjectID `bson:"_id,omitempty"`
-	Name      string       `bson:"name"`
-	Email     string       `bson:"email"`
-	Age       int          `bson:"age"`
-	CreatedAt time.Time    `bson:"created_at"`
-	UpdatedAt time.Time    `bson:"updated_at"`
-}
-
-// 实现 mgo.Namer 接口
-func (User) CollName() string {
-	return "users"
+    ID        string    `bson:"_id,omitempty"`
+    Name      string    `bson:"name"`
+    Age       int       `bson:"age"`
+    Role      string    `bson:"role"`
+    CreatedAt time.Time `bson:"created_at"`
 }
 ```
 
-### 2. 连接与基本操作
+### 2. 初始化连接与集合
 
 ```go
 func main() {
-	// 1. 连接数据库
-	db := mgo.MustOpen("mongodb://localhost/mgo_demo")
-	
-	// 2. 获取泛型集合 (启用自动时间戳)
-	users := mgo.Model[User](db).WithTimestamps()
+    // 1. 连接数据库 (mgo.Connect 封装了默认超时配置)
+    // 返回 *mgo.Client (包装器，内嵌原生 Client)
+    cli, err := mgo.Connect("mongodb://localhost:27017")
+    if err != nil {
+        panic(err)
+    }
 
-	// 3. 插入数据
-	user := &User{
-		Name:  "张三",
-		Email: "zhangsan@example.com",
-		Age:   25,
-	}
-	id, _ := users.Insert(user)
+    // 2. 获取 Database 对象
+    db := cli.Database("my_db")
 
-	// 4. 查询数据
-	// 根据 ID 查询
-	foundUser, _ := users.FindByID(id)
-	
-	// 链式查询
-	activeUsers, _ := users.Find().
-		Eq("age", 25).
-		Limit(10).
-		All()
-
-	// 5. 更新数据
-	users.Find().ID(id).Set("age", 26).Update()
-
-	// 6. 删除数据
-	users.Find().ID(id).Delete()
+    // 3. 创建 Collection
+    // 传入 db 实例
+    users := db.Collection("users")
 }
 ```
 
-## 📖 详细文档
+## CRUD 操作示例
 
-### 连接数据库
+### 插入 (Insert)
 
-`mgo` 提供了多种连接方式：
+利用 v2 特性，直接支持切片插入，无需 `[]any` 转换。
 
 ```go
-// 方式一：MustOpen (连接失败会 panic，适合初始化)
-db := mgo.MustOpen("mongodb://localhost/mydb")
+ctx := context.Background()
 
-// 方式二：Open (返回 error)
-db, err := mgo.Open("mongodb://localhost/mydb")
+// 单条插入
+users.Insert().Doc(&User{Name: "Alice", Age: 20}).One()
 
-// 方式三：OpenClient (获取 Client 实例，用于跨库操作)
-client, err := mgo.OpenClient("mongodb://localhost")
-db := client.Database("mydb")
-
-// 配置选项
-db, err := mgo.Open("mongodb://localhost/mydb", 
-    mgo.MaxPoolSize(100),
-    mgo.Timeout(10*time.Second),
-)
+// 批量插入
+users.Insert().
+    Ctx(ctx).
+    Docs(
+        &User{Name: "Bob", Age: 22},
+        &User{Name: "Charlie", Age: 23},
+    ).
+    Many()
 ```
 
-### 模型定义与选项
-
-使用 `mgo.Model[T](db)` 获取集合操作对象。
+### 查询 (Find)
 
 ```go
-// 基础用法
-users := mgo.Model[User](db)
-
-// 启用自动时间戳 (默认字段: created_at, updated_at)
-users := mgo.Model[User](db).WithTimestamps()
-
-// 自定义时间戳字段
-users := mgo.Model[User](db).WithTimestamps("create_time", "update_time")
-
-// 启用软删除 (默认字段: deleted_at)
-users := mgo.Model[User](db).WithSoftDelete()
-```
-
-### 查询 (Query)
-
-`mgo` 提供了丰富的链式查询方法。
-
-#### 基础查询
-
-```go
-// 查询单条
-user, err := users.Find().Eq("name", "张三").One()
-
-// 查询列表
-list, err := users.Find().Gt("age", 18).All()
-
-// 统计数量
-count, err := users.Find().Eq("status", "active").Count()
-```
-
-#### 过滤条件
-
-```go
-q := users.Find()
-
-q.Eq("name", "张三")       // 等于
-q.Ne("status", "banned")   // 不等于
-q.Gt("age", 18)            // 大于
-q.Gte("age", 18)           // 大于等于
-q.Lt("age", 60)            // 小于
-q.Lte("age", 60)           // 小于等于
-q.In("role", []string{"admin", "editor"}) // 包含
-q.Regex("email", "@gmail.com$") // 正则匹配
-
-// 复杂条件 (支持 Map 合并)
-q.Where(mgo.M{
-    "age": mgo.M{"$gt": 18},
-    "status": "active",
-})
-
-// 条件分支
-q.When(isAdult, func(q *mgo.Query[User]) {
-    q.Gt("age", 18)
-})
-```
-
-#### 分页与排序
-
-```go
-// 排序 (字段名前加 - 表示降序)
-users.Find().Sort("-created_at", "name").All()
-
-// 分页
-users.Find().Skip(10).Limit(20).All()
-
-// 分页列表 (返回分页信息)
-page, err := users.Find().PageList(1, 20)
-fmt.Printf("总数: %d, 总页数: %d\n", page.Total, page.TotalPages)
+// Where 接受变长参数 ...bson.E，内部直接构建 bson.D，零 Map 分配
+var list []User
+err := users.Find().
+    Where(
+        mgo.Gt("age", 18),
+        mgo.Eq("status", "active"),
+    ).
+    SortDesc("created_at"). // 明确的排序方向
+    Limit(10).
+    All(&list) // 传入切片指针
 ```
 
 ### 更新 (Update)
 
+提供 `Set`, `Inc` 等快捷方法，无需手动构建 `$set` map。
+
 ```go
-// 更新单条
-users.Find().ID(id).Set("name", "李四").Update()
-
-// 批量更新
-users.Find().Lt("age", 18).Set("status", "minor").UpdateMany()
-
-// 原子操作
-users.Find().ID(id).Inc("balance", 100).Update() // 增加
-users.Find().ID(id).Push("tags", "new_tag").Update() // 数组追加
-users.Find().ID(id).Pull("tags", "old_tag").Update() // 数组移除
+// 将名为 Alice 的用户年龄改为 25，并增加登录次数
+err := users.Update().
+    Where(mgo.Eq("name", "Alice")).
+    Set("age", 25).
+    Inc("login_count", 1).
+    One()
 ```
 
 ### 删除 (Delete)
 
 ```go
-// 删除单条
-users.Find().ID(id).Delete()
-
-// 批量删除
-users.Find().Eq("status", "deleted").DeleteMany()
-
-// 如果启用了软删除，Delete() 会执行软删除，ForceDelete() 执行物理删除
+res, err := users.Delete().
+    Where(mgo.Lt("age", 10)).
+    Many()
 ```
 
-### 聚合 (Aggregation)
+## 高级特性
 
-使用 `agg` 子包进行聚合查询。
+### 分页方案 (Pagination)
+
+#### 方案 A: 传统分页 (Page/Size)
+适用于后台管理列表，数据量中等。
 
 ```go
-import "github.com/gocrud/mgo/agg"
+// 查询第 2 页，每页 20 条
+var list []User
+pageRes, err := users.Find().
+    Where(mgo.F("role").Eq("admin")).
+    SortDesc("created_at").
+    Paginate(2, 20).
+    All(&list)
 
-type CityStats struct {
-    City   string  `bson:"_id"`
-    Count  int     `bson:"count"`
-    AvgAge float64 `bson:"avg_age"`
+fmt.Printf("总数: %d, 总页数: %d\n", pageRes.Total, pageRes.TotalPages)
+for _, u := range list {
+    fmt.Println(u.Name)
+}
+```
+
+#### 方案 B: 游标分页 (Cursor/Seek) - **高性能推荐**
+适用于移动端 Feed 流、无限滚动，数据量大。利用索引查找，无 `Skip` 开销。
+
+```go
+// 假设 lastUser 是上一页最后一条数据
+var lastUser User 
+// ... (获取 lastUser)
+
+query := users.Find().
+    Where(mgo.Eq("role","user")).
+    SortDesc("created_at"). // 必须指定排序，Seek 依赖此方向
+    Limit(20)
+
+// 如果不是第一页，传入上一条记录对象
+if lastUser.ID != "" {
+    // 库会自动根据 SortDesc("created_at") 生成 { created_at: { $lt: lastUser.CreatedAt } }
+    // 支持单字段排序的自动推断
+    query.Seek(lastUser)
 }
 
-results, err := agg.Aggregate[CityStats](users).
-    Match(mgo.Eq("status", "active")).
-    GroupBy("$city").
-        Count("count").
-        Avg("avg_age", "$age").
+var list []User
+err := query.All(&list)
+```
+
+### 时间辅助函数 (Time Helpers)
+
+解决 MongoDB 存储 UTC 时间导致的查询转换痛点。
+
+```go
+// 查询“今天”注册的所有用户
+// mgo.DayRange 自动返回当天的 UTC 起止时间 (00:00:00 - 23:59:59)
+start, end := mgo.DayRange(time.Now())
+
+var list []User
+err := users.Find().
+    Where(
+        mgo.Gte("created_at", start),
+        mgo.Lt("created_at", end),
+    ).
+    All(&list)
+```
+
+## 聚合 (Aggregation)
+
+`mgo` 提供了一套符合直觉的链式聚合 API，并通过 `agg` 子包提供类型安全的累加器支持。
+
+### 1. 分组统计 (Group)
+
+```go
+import (
+    "github.com/gocrud/mgo"
+    "github.com/gocrud/mgo/agg" // 引入聚合子包
+)
+
+type RoleStat struct {
+    Role      string  `bson:"_id"`
+    Count     int     `bson:"count"`
+    AvgAge    float64 `bson:"avg_age"`
+}
+
+var results []RoleStat
+
+err := users.Aggregate().
+    // 1. 筛选: 复用 mgo.Op，保持习惯一致
+    Match(
+        mgo.Eq("status", "active"),
+        mgo.Gt("age", 18),
+    ).
+    // 2. 分组: 使用 agg 子包辅助函数
+    Group(
+        "$role", // _id: 按 role 字段分组
+        agg.Count("count"),
+        agg.Avg("avg_age", "$age"),
+    ).
+    // 3. 排序
     SortDesc("count").
-    All()
+    All(&results)
 ```
 
-### 事务 (Transactions)
+### 2. 多表关联 (Join & Lookup)
 
-使用 `tx` 子包管理事务。
+`mgo` 提供了 `Join` 系列快捷方法，针对最常见的 **1:1 关联 (Left Join)** 场景进行了极致简化（自动关联 `_id` 并 `Unwind`）。
 
 ```go
-import "github.com/gocrud/mgo/tx"
+type OrderWithUser struct {
+    OrderID string `bson:"_id"`
+    Amount  int    `bson:"amount"`
+    User    *User  `bson:"user_info"` // Join 自动 Unwind，直接映射为结构体指针
+}
 
-err := tx.Transaction(db, func(sess *tx.Session) error {
-    users := mgo.Model[User](sess)
-    orders := mgo.Model[Order](sess)
-    
-    if err := users.Find().ID(uid).Inc("balance", -100).Update(); err != nil {
-        return err
-    }
-    
-    if _, err := orders.Insert(newOrder); err != nil {
-        return err
-    }
-    
-    return nil
-})
+var orders []OrderWithUser
+
+err := db.Collection("orders").Aggregate().
+    Match(mgo.Gte("amount", 100)).
+    // ✅ 推荐: 快捷方式 (1:1)
+    // 自动关联 users._id，并执行 Unwind (Left Join)
+    Join("users", "user_id", "user_info").
+    All(&orders)
+
+// 💡 场景: 自定义外键 (1:1)
+// JoinBy("products", "sku_code", "code", "product_detail")
+
+// 💡 场景: 原始 Lookup (1:N)
+// 当你需要获取数组结果时使用
+// Lookup("comments", "_id", "post_id", "comments_list")
 ```
 
-### 批量处理 (Batch)
+### 3. 混合原生管道 (Pipeline Escape Hatch)
 
-使用 `batch` 子包进行高效批量操作。
+当遇到 `mgo` 尚未封装的高级操作（如 `$bucket`, `$facet`）时，使用 `.Pipeline()` 混合注入原生 BSON。
+`mgo` 提供了 `mgo.D`, `mgo.A` 等类型别名，无需引入官方 bson 包。
 
 ```go
-import "github.com/gocrud/mgo/batch"
-
-// 自动分批插入
-err := batch.InsertBatch(users, largeUserList, batch.Size(500))
+err := products.Aggregate().
+    Match(mgo.Eq("category", "electronics")).
+    // 插入原生管道处理复杂逻辑
+    Pipeline(mgo.A{
+        mgo.D{{"$bucket", mgo.D{
+            {"groupBy", "$price"},
+            {"boundaries", mgo.A{0, 100, 500, 1000}},
+            {"default", "expensive"},
+            {"output", mgo.D{
+                {"count", mgo.D{{"$sum", 1}}},
+            }},
+        }}},
+    }).
+    All(&results)
 ```
 
-## 🤝 贡献
+### 4. 聚合分页与单条查询
 
-欢迎提交 Issue 和 Pull Request！
+#### 聚合分页 (Paginate)
 
-## 📄 许可证
+`mgo` 的聚合分页采用 **Count + Query** 策略，自动处理总数统计和分页逻辑。
 
-MIT License
+```go
+type OrderDetail struct {
+    OrderID string `bson:"_id"`
+    Amount  int    `bson:"amount"`
+    User    *User  `bson:"user_info"`
+}
+
+var list []OrderDetail
+
+// Paginate(page, size)
+// 返回 *PaginatedResult (Total, Page, Size)
+res, err := orders.Aggregate().
+    Match(mgo.Eq("status", "paid")).
+    Join("users", "user_id", "user_info").
+    SortDesc("amount").
+    Paginate(1, 20). // 第 1 页，每页 20 条
+    All(&list)       // 将当前页数据解码到 list
+
+if err == nil {
+    fmt.Printf("Total: %d, List Size: %d\n", res.Total, len(list))
+}
+```
+
+#### 单条查询 (One)
+
+用于统计结果或获取特定详情，自动追加 `$limit: 1` 并解码为单个对象。
+
+```go
+type StatResult struct {
+    AvgPrice   float64 `bson:"avg_price"`
+    TotalStock int     `bson:"total_stock"`
+}
+
+var stat StatResult
+
+err := products.Aggregate().
+    Match(mgo.Eq("category", "electronics")).
+    Group(
+        nil, // _id: null (全局统计)
+        agg.Avg("avg_price", "$price"),
+        agg.Sum("total_stock", "$stock"),
+    ).
+    One(&stat) // 直接解码为结构体
+```
+
+## 自动化时间管理 (Auto Time Management)
+
+`mgo` 提供了一套零样板代码的方案，自动维护 `created_at` 和 `updated_at`。
+
+### 1. 开启自动化
+
+在初始化集合时，调用 `.AutoTime()`。
+
+```go
+// 开启后：
+// 1. Insert 操作会自动检测 TimeHook 接口并填充时间
+// 2. Update 操作会自动注入 $set: { updated_at: now }
+users := db.Collection("users").AutoTime()
+```
+
+### 2. 内嵌公共模型
+
+在你的结构体中内嵌 `mgo.TimeFields`，它已实现了 `TimeHook` 接口。
+
+```go
+type User struct {
+    ID             string         `bson:"_id,omitempty"`
+    Name           string         `bson:"name"`
+    mgo.TimeFields `bson:",inline"` // ✅ 内嵌，自动获得时间管理能力
+}
+```
+
+### 3. 使用效果
+
+```go
+// Insert: 自动填充 CreatedAt 和 UpdatedAt
+users.Insert().Doc(&User{Name: "Alice"}).One()
+
+// Update: 自动更新 UpdatedAt
+err := users.Update().
+    Where(mgo.Eq("name", "Alice")).
+    Set("age", 26).
+    One() // 实际执行: { $set: { age: 26, updated_at: <now> } }
+```
+
+## 软删除 (Soft Delete)
+
+`mgo` 支持无侵入式的软删除，通过标记 `deleted_at` 字段来替代物理删除。
+
+### 1. 开启软删除
+
+```go
+// 开启后：
+// 1. Delete 操作变为 Update 设置 deleted_at
+// 2. Find/Count/Paginate 操作自动过滤 deleted_at != null
+users := db.Collection("users").SoftDelete()
+```
+
+### 2. 内嵌模型
+
+```go
+type User struct {
+    ID             string         `bson:"_id,omitempty"`
+    mgo.SoftDelete `bson:",inline"` // ✅ 内嵌，提供 DeletedAt 字段
+}
+```
+
+### 3. 使用效果
+
+```go
+// 逻辑删除 (Soft Delete)
+// 实际执行: UPDATE users SET deleted_at = <now> WHERE ...
+res, err := users.Delete().Where(mgo.Eq("name", "Alice")).Many()
+
+// 物理删除 (Hard Delete)
+// 实际执行: DELETE FROM users WHERE ...
+res, err = users.Delete().Where(mgo.Eq("name", "Bob")).Hard().Many()
+
+// 查询 (自动过滤已删除)
+var list []User
+err = users.Find().All(&list)
+
+// 查询包含已删除 (Unscoped)
+err = users.Find().Unscoped().All(&list)
+
+// 恢复数据 (Restore)
+// 自动隐含 Unscoped，并将 deleted_at 置为 null
+err = users.Update().
+    Where(mgo.Eq("name", "Alice")).
+    Restore().
+    One()
+```
+
+## 事务 (Transactions)
+
+`mgo` 提供了闭包式的事务支持，自动处理重试和提交/回滚。
+
+### 使用 `client.Tx`
+
+```go
+func Transfer(client *mgo.Client, users *mgo.Collection, fromID, toID string, amount int) error {
+    // 开启事务
+    return client.Tx(context.Background(), func(txCtx context.Context) error {
+        
+        // 1. 扣款 (A)
+        // ⚠️ 关键: 必须调用 .Tx(txCtx) 绑定事务上下文
+        if err := users.Update().
+            Tx(txCtx). 
+            Where(mgo.Eq("_id", fromID)).
+            Inc("balance", -amount).
+            One(); err != nil {
+            return err // 返回错误，自动回滚
+        }
+
+        // 2. 加款 (B)
+        if err := users.Update().
+            Tx(txCtx).
+            Where(mgo.Eq("_id", toID)).
+            Inc("balance", amount).
+            One(); err != nil {
+            return err
+        }
+
+        return nil // 返回 nil，自动提交
+    })
+}
+```
